@@ -286,7 +286,7 @@ category 규칙: 예금/입출금→cash, 국내주식/ETF→domestic_stock, 해
       <Card>
         <SectionTitle>🤖 AI 계좌 자동 파싱</SectionTitle>
         <p className="text-xs text-gray-500 mb-3">은행 앱 스크린샷을 업로드하면 Claude가 계좌 정보를 자동으로 추출합니다.</p>
-        <Btn size="sm" variant="secondary" onClick={() => { setVisionMember(data.members[0]?.id||""); setVisionImg(null); setVisionResult(null); setVisionError(""); setVisionModal(true); }}>
+        <Btn size="sm" variant="secondary" onClick={() => { setVisionMember(data.members[0]?.id||""); setVisionImg([]); setVisionResult(null); setVisionError(""); setVisionModal(true); }}>
           📸 스크린샷으로 계좌 추가
         </Btn>
       </Card>
