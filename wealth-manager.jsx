@@ -4,6 +4,19 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, LineChart, Line, XAx
 // ─────────────────────────────────────────────
 // 상수 & 데이터 모델
 // ─────────────────────────────────────────────
+const DEFAULT_INCOME_CATS = [
+  { id: "regular_income", label: "정기수입", color: "#4F86C6", isIncome: true, isRegular: true },
+  { id: "irregular_income", label: "비정기수입", color: "#82C596", isIncome: true, isRegular: false },
+];
+const DEFAULT_EXPENSE_CATS = [
+  { id: "fixed", label: "고정지출", color: "#4F86C6", isIncome: false, isRegular: true },
+  { id: "financial_cost", label: "금융비용", color: "#E85D75", isIncome: false, isRegular: true },
+  { id: "savings", label: "저축", color: "#82C596", isIncome: false, isRegular: true },
+  { id: "pension_exp", label: "연금", color: "#E8A87C", isIncome: false, isRegular: true },
+  { id: "living", label: "생활비", color: "#9B6FD4", isIncome: false, isRegular: true },
+  { id: "irregular", label: "비정기지출", color: "#F0C040", isIncome: false, isRegular: false },
+];
+
 const DEFAULT_DATA = {
   members: [
     { id: "m1", name: "강주현", color: "#4F86C6" },
@@ -17,6 +30,8 @@ const DEFAULT_DATA = {
   monthlyActuals: [],
   balanceSheetSnapshots: [],
   accountBook: [],
+  incomeCategories: DEFAULT_INCOME_CATS,
+  expenseCategories: DEFAULT_EXPENSE_CATS,
 };
 
 const ACCOUNT_CATEGORIES = [
@@ -57,6 +72,15 @@ const REGULAR_EXPENSE_CATS = EXPENSE_CATEGORIES.filter(c => c.value !== "irregul
 const IRREGULAR_EXPENSE_CATS = EXPENSE_CATEGORIES.filter(c => c.value === "irregular");
 const ALL_PLAN_CATEGORIES = [...INCOME_CATEGORIES, ...EXPENSE_CATEGORIES];
 const REGULAR_CATEGORIES = [...REGULAR_INCOME_CATS, ...REGULAR_EXPENSE_CATS];
+
+// 데이터 기반 카테고리 헬퍼 (customCategories 있으면 그거 사용)
+const getIncomeCats = (data) => (data.incomeCategories||DEFAULT_INCOME_CATS).map(c=>({...c, value:c.id}));
+const getExpenseCats = (data) => (data.expenseCategories||DEFAULT_EXPENSE_CATS).map(c=>({...c, value:c.id}));
+const getAllCats = (data) => [...getIncomeCats(data), ...getExpenseCats(data)];
+const getRegularCats = (data) => getAllCats(data).filter(c=>c.isRegular);
+const getIrregularCats = (data) => getAllCats(data).filter(c=>!c.isRegular);
+const getRegularExpCats = (data) => getExpenseCats(data).filter(c=>c.isRegular);
+const getIrregularExpCats = (data) => getExpenseCats(data).filter(c=>!c.isRegular);
 const MEMBER_COLORS = ["#4F86C6","#E8A87C","#82C596","#E85D75","#9B6FD4","#F0C040","#5BC8C0","#C87060"];
 
 // ─────────────────────────────────────────────
@@ -324,6 +348,86 @@ category 규칙: 예금/입출금→cash, 국내주식/ETF→domestic_stock, 해
           </div>
         ))}</div>
       </Card>
+
+      {/* 수입/지출 카테고리 관리 */}
+      {(() => {
+        const [catModal, setCatModal] = React.useState(false);
+        const [editCat, setEditCat] = React.useState(null);
+        const [catType, setCatType] = React.useState("income"); // income | expense
+        const [catForm, setCatForm] = React.useState({ label:"", color:MEMBER_COLORS[0], isRegular:true });
+        const [catTab, setCatTab] = React.useState("income");
+
+        const incomeCats = data.incomeCategories || DEFAULT_INCOME_CATS;
+        const expenseCats = data.expenseCategories || DEFAULT_EXPENSE_CATS;
+
+        const openAddCat = (type) => { setCatType(type); setEditCat(null); setCatForm({ label:"", color:MEMBER_COLORS[0], isRegular: type==="income" ? true : true }); setCatModal(true); };
+        const openEditCat = (cat, type) => { setCatType(type); setEditCat(cat); setCatForm({ label:cat.label, color:cat.color, isRegular:cat.isRegular }); setCatModal(true); };
+        const saveCat = () => {
+          if (!catForm.label.trim()) return;
+          const newCat = { id: editCat?.id || genId(), ...catForm, isIncome: catType==="income" };
+          setData((d) => {
+            if (catType === "income") {
+              const cats = editCat ? (d.incomeCategories||DEFAULT_INCOME_CATS).map(c=>c.id===editCat.id?newCat:c) : [...(d.incomeCategories||DEFAULT_INCOME_CATS), newCat];
+              return { ...d, incomeCategories: cats };
+            } else {
+              const cats = editCat ? (d.expenseCategories||DEFAULT_EXPENSE_CATS).map(c=>c.id===editCat.id?newCat:c) : [...(d.expenseCategories||DEFAULT_EXPENSE_CATS), newCat];
+              return { ...d, expenseCategories: cats };
+            }
+          });
+          setCatModal(false);
+        };
+        const deleteCat = (catId, type) => {
+          if (!window.confirm("삭제하시겠습니까? 해당 카테고리 항목들이 영향받을 수 있습니다.")) return;
+          setData((d) => {
+            if (type==="income") return { ...d, incomeCategories: (d.incomeCategories||DEFAULT_INCOME_CATS).filter(c=>c.id!==catId) };
+            return { ...d, expenseCategories: (d.expenseCategories||DEFAULT_EXPENSE_CATS).filter(c=>c.id!==catId) };
+          });
+        };
+
+        return (
+          <Card>
+            <SectionTitle>🏷️ 수입/지출 카테고리</SectionTitle>
+            <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit mb-4">
+              {[["income","수입"],["expense","지출"]].map(([k,l])=><button key={k} onClick={()=>setCatTab(k)} className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${catTab===k?"bg-white text-[#1a2744] shadow-sm":"text-gray-500"}`}>{l}</button>)}
+            </div>
+            {catTab==="income" && <>
+              <div className="space-y-1 mb-3">{incomeCats.map(cat=>(
+                <div key={cat.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50">
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{background:cat.color}}/><span className="text-sm text-gray-700">{cat.label}</span><span className={`text-xs px-1.5 py-0.5 rounded-full ${cat.isRegular?"bg-blue-50 text-blue-500":"bg-orange-50 text-orange-500"}`}>{cat.isRegular?"정기":"비정기"}</span></div>
+                  <div className="flex gap-1"><Btn size="sm" variant="ghost" onClick={()=>openEditCat(cat,"income")}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>deleteCat(cat.id,"income")}>삭제</Btn></div>
+                </div>
+              ))}</div>
+              <Btn size="sm" onClick={()=>openAddCat("income")}>+ 수입 카테고리 추가</Btn>
+            </>}
+            {catTab==="expense" && <>
+              <div className="space-y-1 mb-3">{expenseCats.map(cat=>(
+                <div key={cat.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50">
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{background:cat.color}}/><span className="text-sm text-gray-700">{cat.label}</span><span className={`text-xs px-1.5 py-0.5 rounded-full ${cat.isRegular?"bg-blue-50 text-blue-500":"bg-orange-50 text-orange-500"}`}>{cat.isRegular?"정기":"비정기"}</span></div>
+                  <div className="flex gap-1"><Btn size="sm" variant="ghost" onClick={()=>openEditCat(cat,"expense")}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>deleteCat(cat.id,"expense")}>삭제</Btn></div>
+                </div>
+              ))}</div>
+              <Btn size="sm" onClick={()=>openAddCat("expense")}>+ 지출 카테고리 추가</Btn>
+            </>}
+            <Modal open={catModal} onClose={()=>setCatModal(false)} title={editCat?"카테고리 수정":"카테고리 추가"}>
+              <div className="space-y-3">
+                <Inp label="카테고리명" value={catForm.label} onChange={(v)=>setCatForm(f=>({...f,label:v}))} required/>
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-2">색상</label>
+                  <div className="flex gap-2 flex-wrap">{MEMBER_COLORS.map(c=><button key={c} onClick={()=>setCatForm(f=>({...f,color:c}))} className="w-8 h-8 rounded-full" style={{background:c, outline:catForm.color===c?`3px solid ${c}`:"none", outlineOffset:2}}/>)}</div>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-2">구분</label>
+                  <div className="flex gap-2">
+                    <button onClick={()=>setCatForm(f=>({...f,isRegular:true}))} className={`px-3 py-1.5 rounded-xl text-sm font-semibold transition-all ${catForm.isRegular?"bg-blue-500 text-white":"bg-gray-100 text-gray-600"}`}>📅 정기</button>
+                    <button onClick={()=>setCatForm(f=>({...f,isRegular:false}))} className={`px-3 py-1.5 rounded-xl text-sm font-semibold transition-all ${!catForm.isRegular?"bg-orange-500 text-white":"bg-gray-100 text-gray-600"}`}>⚡ 비정기</button>
+                  </div>
+                </div>
+                <div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setCatModal(false)}>취소</Btn><Btn onClick={saveCat}>저장</Btn></div>
+              </div>
+            </Modal>
+          </Card>
+        );
+      })()}
 
       {/* Claude Vision 계좌 파싱 */}
       <Card>
@@ -594,10 +698,100 @@ const IncomeExpenseSection = ({ data, setData }) => {
     setIm(false);
   };
 
+  const moveItem = (itemId, dir) => {
+    if (!curPlan) return;
+    setData((d) => ({
+      ...d,
+      incomeExpensePlans: d.incomeExpensePlans.map((p) => {
+        if (p.id !== curPlan.id) return p;
+        const items = [...p.items];
+        const idx = items.findIndex(i => i.id === itemId);
+        const newIdx = idx + dir;
+        if (newIdx < 0 || newIdx >= items.length) return p;
+        [items[idx], items[newIdx]] = [items[newIdx], items[idx]];
+        return { ...p, items };
+      })
+    }));
+  };
+
+  // 드래그 상태
+  const dragItem = React.useRef(null);
+  const dragOverItem = React.useRef(null);
+
+  const handleDragStart = (e, itemId) => {
+    dragItem.current = itemId;
+    e.dataTransfer.effectAllowed = "move";
+    e.currentTarget.style.opacity = "0.5";
+  };
+  const handleDragEnd = (e) => {
+    e.currentTarget.style.opacity = "1";
+    dragItem.current = null;
+    dragOverItem.current = null;
+  };
+  const handleDragOver = (e, itemId) => {
+    e.preventDefault();
+    dragOverItem.current = itemId;
+  };
+  const handleDrop = (e, itemId) => {
+    e.preventDefault();
+    if (!curPlan || !dragItem.current || dragItem.current === itemId) return;
+    setData((d) => ({
+      ...d,
+      incomeExpensePlans: d.incomeExpensePlans.map((p) => {
+        if (p.id !== curPlan.id) return p;
+        const items = [...p.items];
+        const fromIdx = items.findIndex(i => i.id === dragItem.current);
+        const toIdx = items.findIndex(i => i.id === itemId);
+        if (fromIdx < 0 || toIdx < 0) return p;
+        const [moved] = items.splice(fromIdx, 1);
+        items.splice(toIdx, 0, moved);
+        return { ...p, items };
+      })
+    }));
+    dragItem.current = null;
+    dragOverItem.current = null;
+  };
+
+  // 터치 드래그 (모바일)
+  const touchDragItem = React.useRef(null);
+  const handleTouchStart = (e, itemId) => {
+    touchDragItem.current = itemId;
+  };
+  const handleTouchEnd = (e, targetItemId) => {
+    if (!curPlan || !touchDragItem.current || touchDragItem.current === targetItemId) return;
+    const touch = e.changedTouches[0];
+    const el = document.elementFromPoint(touch.clientX, touch.clientY);
+    const targetEl = el?.closest("[data-item-id]");
+    const overItemId = targetEl?.dataset?.itemId;
+    if (!overItemId || overItemId === touchDragItem.current) { touchDragItem.current = null; return; }
+    setData((d) => ({
+      ...d,
+      incomeExpensePlans: d.incomeExpensePlans.map((p) => {
+        if (p.id !== curPlan.id) return p;
+        const items = [...p.items];
+        const fromIdx = items.findIndex(i => i.id === touchDragItem.current);
+        const toIdx = items.findIndex(i => i.id === overItemId);
+        if (fromIdx < 0 || toIdx < 0) return p;
+        const [moved] = items.splice(fromIdx, 1);
+        items.splice(toIdx, 0, moved);
+        return { ...p, items };
+      })
+    }));
+    touchDragItem.current = null;
+  };
+
   const initActual = (ym) => {
     const ex = data.monthlyActuals.find((a) => a.yearMonth === ym);
+    const irregIds = new Set(getIrregularCats(data).map(c=>c.id));
     if (ex) { const eds={}; ex.items.forEach((i)=>{eds[i.planItemId]=i.actualAmount;}); setAEdits(eds); setExtras(ex.extraItems||[]); }
-    else if (activePlan) { const eds={}; activePlan.items.forEach((i)=>{eds[i.id]=i.amount;}); setAEdits(eds); setExtras([]); }
+    else if (activePlan) {
+      const eds={};
+      activePlan.items.forEach((i)=>{
+        // 비정기는 기본값 0, 정기는 계획값
+        eds[i.id] = irregIds.has(i.category) ? 0 : i.amount;
+      });
+      setAEdits(eds); setExtras([]);
+    }
     else { setAEdits({}); setExtras([]); }
   };
 
@@ -680,10 +874,19 @@ const IncomeExpenseSection = ({ data, setData }) => {
                   return (
                     <div key={cat.value} className="mb-4">
                       <div className="flex items-center justify-between mb-2"><div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full" style={{background:cat.color}}/><span className="text-xs font-bold text-gray-500 uppercase tracking-wide">{cat.label}</span></div><span className={`text-xs font-bold ${cat.isIncome?"text-blue-600":"text-gray-600"}`}>{fmt(tot)}</span></div>
-                      <div className="space-y-1">{items.map(item => (
-                        <div key={item.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition">
-                          <div><span className="text-sm text-gray-700">{item.label}</span>{item.memo&&<span className="text-xs text-gray-400 ml-2">{item.memo}</span>}</div>
-                          <div className="flex items-center gap-2"><span className="text-sm font-semibold text-gray-800">{fmt(item.amount)}</span><Btn size="sm" variant="ghost" onClick={()=>{setEi(item);setIForm({category:item.category,label:item.label,amount:String(item.amount),memo:item.memo||""});setIm(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCdi(item.id)}>삭제</Btn></div>
+                      <div className="space-y-1">{items.map((item, idx) => (
+                        <div key={item.id} data-item-id={item.id}
+                          draggable
+                          onDragStart={(e)=>handleDragStart(e,item.id)}
+                          onDragEnd={handleDragEnd}
+                          onDragOver={(e)=>handleDragOver(e,item.id)}
+                          onDrop={(e)=>handleDrop(e,item.id)}
+                          onTouchStart={(e)=>handleTouchStart(e,item.id)}
+                          onTouchEnd={(e)=>handleTouchEnd(e,item.id)}
+                          className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition cursor-grab active:cursor-grabbing">
+                          <div className="text-gray-300 mr-2 shrink-0 select-none">⠿</div>
+                          <div className="flex-1 min-w-0"><span className="text-sm text-gray-700">{item.label}</span>{item.memo&&<span className="text-xs text-gray-400 ml-2">{item.memo}</span>}</div>
+                          <div className="flex items-center gap-2 shrink-0"><span className="text-sm font-semibold text-gray-800">{fmt(item.amount)}</span><Btn size="sm" variant="ghost" onClick={()=>{setEi(item);setIForm({category:item.category,label:item.label,amount:String(item.amount),memo:item.memo||""});setIm(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCdi(item.id)}>삭제</Btn></div>
                         </div>
                       ))}</div>
                     </div>
@@ -712,10 +915,19 @@ const IncomeExpenseSection = ({ data, setData }) => {
                   return (
                     <div key={cat.value} className="mb-4">
                       <div className="flex items-center justify-between mb-2"><div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full" style={{background:cat.color}}/><span className="text-xs font-bold text-gray-500 uppercase tracking-wide">{cat.label}</span></div><span className={`text-xs font-bold ${cat.isIncome?"text-blue-600":"text-orange-500"}`}>{fmt(tot)}</span></div>
-                      <div className="space-y-1">{items.map(item => (
-                        <div key={item.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-orange-50 hover:bg-orange-100 transition">
-                          <div><span className="text-sm text-gray-700">{item.label}</span>{item.memo&&<span className="text-xs text-gray-400 ml-2">{item.memo}</span>}</div>
-                          <div className="flex items-center gap-2"><span className="text-sm font-semibold text-gray-800">{fmt(item.amount)}</span><Btn size="sm" variant="ghost" onClick={()=>{setEi(item);setIForm({category:item.category,label:item.label,amount:String(item.amount),memo:item.memo||""});setIm(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCdi(item.id)}>삭제</Btn></div>
+                      <div className="space-y-1">{items.map((item, idx) => (
+                        <div key={item.id} data-item-id={item.id}
+                          draggable
+                          onDragStart={(e)=>handleDragStart(e,item.id)}
+                          onDragEnd={handleDragEnd}
+                          onDragOver={(e)=>handleDragOver(e,item.id)}
+                          onDrop={(e)=>handleDrop(e,item.id)}
+                          onTouchStart={(e)=>handleTouchStart(e,item.id)}
+                          onTouchEnd={(e)=>handleTouchEnd(e,item.id)}
+                          className="flex items-center justify-between px-3 py-2 rounded-lg bg-orange-50 hover:bg-orange-100 transition cursor-grab active:cursor-grabbing">
+                          <div className="text-orange-300 mr-2 shrink-0 select-none">⠿</div>
+                          <div className="flex-1 min-w-0"><span className="text-sm text-gray-700">{item.label}</span>{item.memo&&<span className="text-xs text-gray-400 ml-2">{item.memo}</span>}</div>
+                          <div className="flex items-center gap-2 shrink-0"><span className="text-sm font-semibold text-gray-800">{fmt(item.amount)}</span><Btn size="sm" variant="ghost" onClick={()=>{setEi(item);setIForm({category:item.category,label:item.label,amount:String(item.amount),memo:item.memo||""});setIm(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCdi(item.id)}>삭제</Btn></div>
                         </div>
                       ))}</div>
                     </div>
@@ -841,11 +1053,32 @@ const IncomeExpenseSection = ({ data, setData }) => {
             const regExp=allItems.filter((i)=>REGULAR_EXPENSE_CATS.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0);
             const irregExp=allItems.filter((i)=>i.category==="irregular").reduce((s,i)=>s+(i.actualAmount||0),0);
             const inc=regInc; const exp=regExp; const net=inc-exp;
+            // 계획 기준
+            const planRegInc=a.items.filter((i)=>i.category==="regular_income").reduce((s,i)=>s+(i.plannedAmount||0),0);
+            const planRegExp=a.items.filter((i)=>REGULAR_EXPENSE_CATS.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.plannedAmount||0),0);
+            const planIrregInc=a.items.filter((i)=>i.category==="irregular_income").reduce((s,i)=>s+(i.plannedAmount||0),0);
+            const planIrregExp=a.items.filter((i)=>i.category==="irregular").reduce((s,i)=>s+(i.plannedAmount||0),0);
             return <>
               <p className="text-xs font-bold text-gray-500 mb-2">📅 정기 수입/지출</p>
-              <div className="grid grid-cols-3 gap-3 mb-4">{[["정기수입",regInc,"text-blue-600"],["정기지출",regExp,"text-red-500"],["정기순저축",net,net>=0?"text-green-600":"text-red-500"]].map(([l,v,c])=><Card key={l} className="!p-4 text-center"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-sm font-bold ${c}`}>{fmtShort(v)}</p></Card>)}</div>
-              {(irregInc>0||irregExp>0)&&<><p className="text-xs font-bold text-gray-500 mb-2">⚡ 비정기 수입/지출</p>
-              <div className="grid grid-cols-3 gap-3 mb-4">{[["비정기수입",irregInc,"text-blue-400"],["비정기지출",irregExp,"text-orange-500"],["비정기순",irregInc-irregExp,(irregInc-irregExp)>=0?"text-green-500":"text-orange-500"]].map(([l,v,c])=><Card key={l} className="!p-4 text-center"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-sm font-bold ${c}`}>{fmtShort(v)}</p></Card>)}</div></>}
+              <div className="grid grid-cols-2 gap-2 mb-1">
+                <div className="text-center p-2 rounded-xl bg-blue-50"><p className="text-xs text-gray-400">계획 수입</p><p className="text-sm font-bold text-blue-400">{fmtShort(planRegInc)}</p></div>
+                <div className="text-center p-2 rounded-xl bg-blue-50"><p className="text-xs text-gray-400">실적 수입</p><p className="text-sm font-bold text-blue-600">{fmtShort(regInc)}</p></div>
+                <div className="text-center p-2 rounded-xl bg-red-50"><p className="text-xs text-gray-400">계획 지출</p><p className="text-sm font-bold text-red-300">{fmtShort(planRegExp)}</p></div>
+                <div className="text-center p-2 rounded-xl bg-red-50"><p className="text-xs text-gray-400">실적 지출</p><p className="text-sm font-bold text-red-500">{fmtShort(regExp)}</p></div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <div className="text-center p-2 rounded-xl bg-green-50"><p className="text-xs text-gray-400">계획 순저축</p><p className="text-sm font-bold text-green-400">{fmtShort(planRegInc-planRegExp)}</p></div>
+                <div className="text-center p-2 rounded-xl bg-green-50"><p className="text-xs text-gray-400">실적 순저축</p><p className={`text-sm font-bold ${net>=0?"text-green-600":"text-red-500"}`}>{fmtShort(net)}</p></div>
+              </div>
+              {(irregInc>0||irregExp>0||planIrregInc>0||planIrregExp>0)&&<>
+                <p className="text-xs font-bold text-gray-500 mb-2">⚡ 비정기 수입/지출</p>
+                <div className="grid grid-cols-2 gap-2 mb-4">
+                  <div className="text-center p-2 rounded-xl bg-blue-50"><p className="text-xs text-gray-400">계획 수입</p><p className="text-sm font-bold text-blue-400">{fmtShort(planIrregInc)}</p></div>
+                  <div className="text-center p-2 rounded-xl bg-blue-50"><p className="text-xs text-gray-400">실적 수입</p><p className="text-sm font-bold text-blue-600">{fmtShort(irregInc)}</p></div>
+                  <div className="text-center p-2 rounded-xl bg-orange-50"><p className="text-xs text-gray-400">계획 지출</p><p className="text-sm font-bold text-orange-300">{fmtShort(planIrregExp)}</p></div>
+                  <div className="text-center p-2 rounded-xl bg-orange-50"><p className="text-xs text-gray-400">실적 지출</p><p className="text-sm font-bold text-orange-500">{fmtShort(irregExp)}</p></div>
+                </div>
+              </>}
               {(() => {
                 const regCatPie = REGULAR_EXPENSE_CATS.map(cat => ({
                   name: cat.label,
@@ -874,7 +1107,23 @@ const IncomeExpenseSection = ({ data, setData }) => {
         </div>}
         {sumTab==="yearly" && <div className="space-y-4">
           <Card className="!p-4"><div className="flex items-center gap-3"><label className="text-sm font-semibold text-gray-600">연도:</label><select value={sumYear} onChange={(e)=>setSumYear(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none bg-white">{(years.length?years:[String(new Date().getFullYear())]).map((y)=><option key={y} value={y}>{y}년</option>)}</select></div></Card>
-          <div className="grid grid-cols-3 gap-3">{[["연간 수입",yearData.income,"text-blue-600"],["연간 지출",yearData.expense,"text-red-500"],["연간 순저축",yearData.income-yearData.expense,(yearData.income-yearData.expense)>=0?"text-green-600":"text-red-500"]].map(([l,v,c])=><Card key={l} className="!p-4 text-center"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-sm font-bold ${c}`}>{fmtShort(v)}</p></Card>)}</div>
+          {(() => {
+            // 연간 계획 기준
+            const planYearInc = activePlan ? activePlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0)*12 : 0;
+            const planYearExp = activePlan ? activePlan.items.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+i.amount,0)*12 : 0;
+            return (
+              <div className="grid grid-cols-2 gap-2">
+                <div className="text-center p-3 rounded-xl bg-blue-50"><p className="text-xs text-gray-400">계획 수입</p><p className="text-sm font-bold text-blue-400">{fmtShort(planYearInc)}</p></div>
+                <div className="text-center p-3 rounded-xl bg-blue-50"><p className="text-xs text-gray-400">실적 수입</p><p className="text-sm font-bold text-blue-600">{fmtShort(yearData.income)}</p></div>
+                <div className="text-center p-3 rounded-xl bg-red-50"><p className="text-xs text-gray-400">계획 지출</p><p className="text-sm font-bold text-red-300">{fmtShort(planYearExp)}</p></div>
+                <div className="text-center p-3 rounded-xl bg-red-50"><p className="text-xs text-gray-400">실적 지출</p><p className="text-sm font-bold text-red-500">{fmtShort(yearData.expense)}</p></div>
+                <div className="col-span-2 text-center p-3 rounded-xl bg-green-50">
+                  <p className="text-xs text-gray-400 mb-1">계획 순저축 <span className="text-gray-300 mx-1">→</span> 실적 순저축</p>
+                  <p className="text-sm font-bold"><span className="text-green-400">{fmtShort(planYearInc-planYearExp)}</span><span className="text-gray-300 mx-2">→</span><span className={yearData.income-yearData.expense>=0?"text-green-600":"text-red-500"}>{fmtShort(yearData.income-yearData.expense)}</span></p>
+                </div>
+              </div>
+            );
+          })()}
           {yearData.months.length>0&&<Card><SectionTitle>월별 수입/지출</SectionTitle><ResponsiveContainer width="100%" height={220}><BarChart data={yearData.months} margin={{top:5,right:5,bottom:5,left:0}}><CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/><XAxis dataKey="label" tick={{fontSize:11}}/><YAxis tickFormatter={(v)=>fmtShort(v)} tick={{fontSize:11}}/><Tooltip formatter={(v)=>fmt(v)}/><Legend wrapperStyle={{fontSize:11}}/><Bar dataKey="income" name="수입" fill="#4F86C6" radius={[4,4,0,0]}/><Bar dataKey="expense" name="지출" fill="#E85D75" radius={[4,4,0,0]}/></BarChart></ResponsiveContainer></Card>}
           {(() => {
             // 연간 지출 카테고리 합산 (비정기 포함)
