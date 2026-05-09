@@ -674,7 +674,8 @@ const AssetsSection = ({ data, setData }) => {
 const IncomeExpenseSection = ({ data, setData }) => {
   const [tab, setTab] = useState("plan");
   const [selVer, setSelVer] = useState(null);
-  const [im, setIm] = useState(false); const [ei, setEi] = useState(null); const [iForm, setIForm] = useState({ category:"regular_income", label:"", amount:"", memo:"" });
+  const [im, setIm] = useState(false); const [ei, setEi] = useState(null); const [iForm, setIForm] = useState({ category:"regular_income", label:"", amount:"", memo:"", memberId:"" });
+  const [memberFilter, setMemberFilter] = useState("all"); // 구성원 필터
   const [vm, setVm] = useState(false); const [vForm, setVForm] = useState({ label:"", startDate:"" });
   const [aYM, setAYM] = useState(thisYearMonth()); const [aEdits, setAEdits] = useState({}); const [extras, setExtras] = useState([]);
   const [sumTab, setSumTab] = useState("monthly"); const [sumYM, setSumYM] = useState(thisYearMonth()); const [sumYear, setSumYear] = useState(String(new Date().getFullYear()));
@@ -693,7 +694,7 @@ const IncomeExpenseSection = ({ data, setData }) => {
 
   const saveItem = () => {
     if (!iForm.label.trim() || !curPlan) return;
-    const ni = { id: ei?.id || genId(), ...iForm, amount: Number(iForm.amount)||0 };
+    const ni = { id: ei?.id || genId(), ...iForm, amount: Number(iForm.amount)||0, memberId: iForm.memberId||"" };
     setData((d) => ({ ...d, incomeExpensePlans: d.incomeExpensePlans.map((p) => p.id===curPlan.id ? {...p, items: ei ? p.items.map((i)=>i.id===ei.id?ni:i) : [...p.items,ni]} : p) }));
     setIm(false);
   };
@@ -852,7 +853,13 @@ const IncomeExpenseSection = ({ data, setData }) => {
           {curPlan&&<p className="text-xs text-gray-400 mt-2">적용시작: {curPlan.startDate}</p>}
         </Card>
         {curPlan ? <Card>
-          <div className="flex items-center justify-between mb-4"><SectionTitle>💡 {curPlan.label} {curPlan.isActive&&<Badge color="#4F86C6" label="활성"/>}</SectionTitle><Btn size="sm" onClick={()=>{setEi(null);setIForm({category:"regular_income",label:"",amount:"",memo:""});setIm(true);}}>+ 항목 추가</Btn></div>
+          <div className="flex items-center justify-between mb-3"><SectionTitle>💡 {curPlan.label} {curPlan.isActive&&<Badge color="#4F86C6" label="활성"/>}</SectionTitle><Btn size="sm" onClick={()=>{setEi(null);setIForm({category:"regular_income",label:"",amount:"",memo:"",memberId:""});setIm(true);}}>+ 항목 추가</Btn></div>
+          {/* 구성원 필터 */}
+          <div className="flex gap-1 flex-wrap mb-4">
+            <button onClick={()=>setMemberFilter("all")} className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${memberFilter==="all"?"bg-[#1a2744] text-white":"bg-gray-100 text-gray-600"}`}>전체</button>
+            {data.members.map(m=><button key={m.id} onClick={()=>setMemberFilter(m.id)} className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${memberFilter===m.id?"text-white":"bg-gray-100 text-gray-600"}`} style={memberFilter===m.id?{background:m.color}:{}}>{m.name}</button>)}
+            <button onClick={()=>setMemberFilter("none")} className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${memberFilter==="none"?"bg-gray-500 text-white":"bg-gray-100 text-gray-600"}`}>공용</button>
+          </div>
           {/* 정기 섹션 */}
           {(() => {
             const regCats = REGULAR_CATEGORIES;
@@ -870,25 +877,29 @@ const IncomeExpenseSection = ({ data, setData }) => {
                   </div>
                 </div>
                 {regItems.map(({cat, items}) => {
-                  const tot = items.reduce((s,i)=>s+i.amount,0);
+                  const filtItems = memberFilter==="all" ? items : memberFilter==="none" ? items.filter(i=>!i.memberId) : items.filter(i=>i.memberId===memberFilter);
+                  if(!filtItems.length) return null;
+                  const tot = filtItems.reduce((s,i)=>s+i.amount,0);
                   return (
                     <div key={cat.value} className="mb-4">
                       <div className="flex items-center justify-between mb-2"><div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full" style={{background:cat.color}}/><span className="text-xs font-bold text-gray-500 uppercase tracking-wide">{cat.label}</span></div><span className={`text-xs font-bold ${cat.isIncome?"text-blue-600":"text-gray-600"}`}>{fmt(tot)}</span></div>
-                      <div className="space-y-1">{items.map((item, idx) => (
+                      <div className="space-y-1">{filtItems.map((item, idx) => {
+                        const mColor = data.members.find(m=>m.id===item.memberId)?.color;
+                        return (
                         <div key={item.id} data-item-id={item.id}
-                          draggable
-                          onDragStart={(e)=>handleDragStart(e,item.id)}
-                          onDragEnd={handleDragEnd}
-                          onDragOver={(e)=>handleDragOver(e,item.id)}
-                          onDrop={(e)=>handleDrop(e,item.id)}
-                          onTouchStart={(e)=>handleTouchStart(e,item.id)}
-                          onTouchEnd={(e)=>handleTouchEnd(e,item.id)}
-                          className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition cursor-grab active:cursor-grabbing">
+                          draggable onDragStart={(e)=>handleDragStart(e,item.id)} onDragEnd={handleDragEnd} onDragOver={(e)=>handleDragOver(e,item.id)} onDrop={(e)=>handleDrop(e,item.id)} onTouchStart={(e)=>handleTouchStart(e,item.id)} onTouchEnd={(e)=>handleTouchEnd(e,item.id)}
+                          className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition cursor-grab active:cursor-grabbing"
+                          style={mColor?{borderLeft:`3px solid ${mColor}`}:{}}>
                           <div className="text-gray-300 mr-2 shrink-0 select-none">⠿</div>
-                          <div className="flex-1 min-w-0"><span className="text-sm text-gray-700">{item.label}</span>{item.memo&&<span className="text-xs text-gray-400 ml-2">{item.memo}</span>}</div>
-                          <div className="flex items-center gap-2 shrink-0"><span className="text-sm font-semibold text-gray-800">{fmt(item.amount)}</span><Btn size="sm" variant="ghost" onClick={()=>{setEi(item);setIForm({category:item.category,label:item.label,amount:String(item.amount),memo:item.memo||""});setIm(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCdi(item.id)}>삭제</Btn></div>
+                          <div className="flex-1 min-w-0 flex items-center gap-2">
+                            {mColor&&<div className="w-1.5 h-1.5 rounded-full shrink-0" style={{background:mColor}}/>}
+                            <span className="text-sm text-gray-700">{item.label}</span>
+                            {item.memo&&<span className="text-xs text-gray-400">{item.memo}</span>}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0"><span className="text-sm font-semibold text-gray-800">{fmt(item.amount)}</span><Btn size="sm" variant="ghost" onClick={()=>{setEi(item);setIForm({category:item.category,label:item.label,amount:String(item.amount),memo:item.memo||"",memberId:item.memberId||""});setIm(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCdi(item.id)}>삭제</Btn></div>
                         </div>
-                      ))}</div>
+                        );
+                      })}</div>
                     </div>
                   );
                 })}
@@ -1125,27 +1136,79 @@ const IncomeExpenseSection = ({ data, setData }) => {
             const planRegInc = activePlan ? activePlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0)*12 : 0;
             const planIrregInc = activePlan ? activePlan.items.filter(i=>i.category==="irregular_income").reduce((s,i)=>s+i.amount,0) : 0;
             const planInc = planRegInc + planIrregInc;
+            // 비정기수입 90% 저축, 10% 생활비 가정
+            const irregInc90 = Math.round(planIrregInc * 0.9);
+            const irregInc10 = planIrregInc - irregInc90;
             // 계획 지출: 정기*12 + 비정기 그대로
             const planRegExp = activePlan ? activePlan.items.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+i.amount,0)*12 : 0;
             const planIrregExp = activePlan ? activePlan.items.filter(i=>i.category==="irregular").reduce((s,i)=>s+i.amount,0) : 0;
             const planExp = planRegExp + planIrregExp;
+            // 계획 카테고리별 (비정기수입 90% 저축 반영)
+            const planSavings = activePlan ? activePlan.items.filter(i=>i.category==="savings").reduce((s,i)=>s+i.amount,0)*12 + irregInc90 : 0;
+            const planLiving = activePlan ? activePlan.items.filter(i=>i.category==="living").reduce((s,i)=>s+i.amount,0)*12 + irregInc10 : 0;
             // 실적 수입/지출
             const actInc = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category==="regular_income"||i.category==="irregular_income").reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
             const actExp = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>EXPENSE_CATEGORIES.find(c=>c.value===i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+            // "이대로라면 연간" 프로젝션: 입력된 달 실적 + 나머지 달 계획
+            const allMonths = Array.from({length:12},(_,i)=>`${sumYear}-${String(i+1).padStart(2,"0")}`);
+            const enteredMonths = new Set(yearActuals.map(a=>a.yearMonth));
+            const remainMonths = 12 - enteredMonths.size;
+            // 각 카테고리별 프로젝션
+            const projByCat = {};
+            [...REGULAR_EXPENSE_CATS,...IRREGULAR_EXPENSE_CATS].forEach(cat=>{
+              const actVal = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category===cat.value).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+              const planMonthly = activePlan ? activePlan.items.filter(i=>i.category===cat.value).reduce((s,i)=>s+i.amount,0) : 0;
+              const isIrreg = cat.value==="irregular";
+              // 비정기는 실적 있으면 실적, 없으면 계획 전체
+              const proj = isIrreg ? (actVal>0?actVal:planMonthly) : actVal + planMonthly*remainMonths;
+              projByCat[cat.value] = proj;
+            });
+            // 수입 프로젝션
+            const actIncRegular = yearActuals.flatMap(a=>a.items).filter(i=>i.category==="regular_income").reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+            const planMonthlyInc = activePlan ? activePlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0) : 0;
+            const projInc = actIncRegular + planMonthlyInc*remainMonths + planIrregInc;
+            const projSavings = projByCat["savings"]||0;
+            const projPension = projByCat["pension_exp"]||0;
             return <>
               {/* 수입/지출 요약 */}
-              <div className="space-y-1 mb-1">
+              <div className="space-y-2 mb-2">
                 <div className="grid grid-cols-2 gap-2">
-                  <div className="p-2 rounded-xl bg-blue-50 text-center"><p className="text-xs text-gray-400">계획 수입<span className="text-gray-300 ml-1">(정기×12+비정기)</span></p><p className="text-base font-bold text-blue-400">{fmtShort(planInc)}</p><p className="text-xs text-gray-400">{fmtShort(planRegInc)}+{fmtShort(planIrregInc)}</p></div>
-                  <div className="p-2 rounded-xl bg-blue-50 text-center"><p className="text-xs text-gray-400">실적 수입 ({nMonths}개월)</p><p className="text-base font-bold text-blue-600">{fmtShort(actInc)}</p></div>
+                  <div className="p-2 rounded-xl bg-blue-50">
+                    <p className="text-xs text-gray-400 mb-0.5">연간 계획 수입</p>
+                    <p className="text-base font-bold text-blue-400">{fmtShort(planInc)}</p>
+                    <p className="text-xs text-gray-300">정기{fmtShort(planRegInc)} + 비정기{fmtShort(planIrregInc)}</p>
+                  </div>
+                  <div className="p-2 rounded-xl bg-blue-50">
+                    <p className="text-xs text-gray-400 mb-0.5">실적 ({nMonths}개월)</p>
+                    <p className="text-base font-bold text-blue-600">{fmtShort(actInc)}</p>
+                    <p className="text-xs text-blue-300">이대로라면 {fmtShort(projInc)}</p>
+                  </div>
+                </div>
+                {planIrregInc>0&&<div className="p-2 rounded-xl bg-amber-50 border border-amber-100 text-xs text-amber-700">
+                  💡 비정기수입 {fmtShort(planIrregInc)} 중 90%({fmtShort(irregInc90)})는 저축, 10%({fmtShort(irregInc10)})는 생활비로 가정
+                </div>}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-2 rounded-xl bg-green-50">
+                    <p className="text-xs text-gray-400 mb-0.5">계획 저축 (비정기90% 포함)</p>
+                    <p className="text-base font-bold text-green-400">{fmtShort(planSavings)}</p>
+                  </div>
+                  <div className="p-2 rounded-xl bg-green-50">
+                    <p className="text-xs text-gray-400 mb-0.5">실적 저축</p>
+                    <p className="text-base font-bold text-green-600">{fmtShort(yearActuals.flatMap(a=>a.items).filter(i=>i.category==="savings").reduce((s,i)=>s+(Number(i.actualAmount)||0),0))}</p>
+                    <p className="text-xs text-green-300">이대로라면 {fmtShort(projSavings)}</p>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <div className="p-2 rounded-xl bg-red-50 text-center"><p className="text-xs text-gray-400">계획 지출<span className="text-gray-300 ml-1">(정기×12+비정기)</span></p><p className="text-base font-bold text-red-300">{fmtShort(planExp)}</p><p className="text-xs text-gray-400">{fmtShort(planRegExp)}+{fmtShort(planIrregExp)}</p></div>
-                  <div className="p-2 rounded-xl bg-red-50 text-center"><p className="text-xs text-gray-400">실적 지출</p><p className="text-base font-bold text-red-500">{fmtShort(actExp)}</p></div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="p-2 rounded-xl bg-green-50 text-center"><p className="text-xs text-gray-400">계획 순저축</p><p className="text-base font-bold text-green-400">{fmtShort(planInc-planExp)}</p></div>
-                  <div className="p-2 rounded-xl bg-green-50 text-center"><p className="text-xs text-gray-400">실적 순저축</p><p className={`text-base font-bold ${actInc-actExp>=0?"text-green-600":"text-red-500"}`}>{fmtShort(actInc-actExp)}</p></div>
+                  <div className="p-2 rounded-xl bg-red-50">
+                    <p className="text-xs text-gray-400 mb-0.5">계획 지출</p>
+                    <p className="text-base font-bold text-red-300">{fmtShort(planExp)}</p>
+                    <p className="text-xs text-gray-300">정기{fmtShort(planRegExp)} + 비정기{fmtShort(planIrregExp)}</p>
+                  </div>
+                  <div className="p-2 rounded-xl bg-red-50">
+                    <p className="text-xs text-gray-400 mb-0.5">실적 지출</p>
+                    <p className="text-base font-bold text-red-500">{fmtShort(actExp)}</p>
+                    <p className="text-xs text-red-300">이대로라면 {fmtShort(Object.values(projByCat).reduce((s,v)=>s+v,0))}</p>
+                  </div>
                 </div>
               </div>
               {/* 계획 도넛(왼) vs 실적 도넛(오) */}
@@ -1186,7 +1249,7 @@ const IncomeExpenseSection = ({ data, setData }) => {
         </div>}
       </div>}
 
-      <Modal open={im} onClose={()=>setIm(false)} title={ei?"항목 수정":"항목 추가"}><div className="space-y-3"><Sel label="카테고리" value={iForm.category} onChange={(v)=>setIForm((f)=>({...f,category:v}))} options={ALL_PLAN_CATEGORIES}/><Inp label="항목명" value={iForm.label} onChange={(v)=>setIForm((f)=>({...f,label:v}))} required/><Inp label="금액 (원)" type="number" value={iForm.amount} onChange={(v)=>setIForm((f)=>({...f,amount:v}))}/><Inp label="메모" value={iForm.memo} onChange={(v)=>setIForm((f)=>({...f,memo:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setIm(false)}>취소</Btn><Btn onClick={saveItem}>저장</Btn></div></div></Modal>
+      <Modal open={im} onClose={()=>setIm(false)} title={ei?"항목 수정":"항목 추가"}><div className="space-y-3"><Sel label="카테고리" value={iForm.category} onChange={(v)=>setIForm((f)=>({...f,category:v}))} options={ALL_PLAN_CATEGORIES}/><Sel label="구성원" value={iForm.memberId||""} onChange={(v)=>setIForm((f)=>({...f,memberId:v}))} options={[{value:"",label:"공용/미지정"},...data.members.map(m=>({value:m.id,label:m.name}))]}/><Inp label="항목명" value={iForm.label} onChange={(v)=>setIForm((f)=>({...f,label:v}))} required/><Inp label="금액 (원)" type="number" value={iForm.amount} onChange={(v)=>setIForm((f)=>({...f,amount:v}))}/><Inp label="메모" value={iForm.memo} onChange={(v)=>setIForm((f)=>({...f,memo:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setIm(false)}>취소</Btn><Btn onClick={saveItem}>저장</Btn></div></div></Modal>
       <Modal open={vm} onClose={()=>setVm(false)} title="새 버전 생성"><div className="space-y-3"><p className="text-xs text-gray-500">기존 활성 버전을 복사해서 새 버전이 만들어집니다.</p><Inp label="버전 이름" value={vForm.label} onChange={(v)=>setVForm((f)=>({...f,label:v}))} placeholder="ex) v2 (2025.07~)" required/><Inp label="적용 시작일" type="date" value={vForm.startDate} onChange={(v)=>setVForm((f)=>({...f,startDate:v}))} required/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setVm(false)}>취소</Btn><Btn onClick={createVer}>생성</Btn></div></div></Modal>
       <Confirm open={!!cdi} message="이 항목을 삭제하시겠습니까?" onConfirm={()=>{if(!curPlan)return; setData((d)=>({...d,incomeExpensePlans:d.incomeExpensePlans.map((p)=>p.id===curPlan.id?{...p,items:p.items.filter((i)=>i.id!==cdi)}:p)})); setCdi(null);}} onCancel={()=>setCdi(null)}/>
       <Confirm open={!!cdv} message="이 버전을 삭제하시겠습니까?" onConfirm={()=>{setData((d)=>({...d,incomeExpensePlans:d.incomeExpensePlans.filter((p)=>p.id!==cdv)})); setCdv(null); setSelVer(null);}} onCancel={()=>setCdv(null)}/>
@@ -1301,52 +1364,70 @@ const DashboardSection = ({ data }) => {
       {(() => {
         const thisYear = String(new Date().getFullYear());
         const yearActuals = data.monthlyActuals.filter(a=>a.yearMonth?.startsWith?.(thisYear));
-        // 올해 누적 실적
-        const ytdInc = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category==="regular_income"||i.category==="irregular_income").reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
-        const ytdRegExp = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
-        const ytdIrregExp = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category==="irregular").reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
-        const ytdExp = ytdRegExp + ytdIrregExp;
-        // 이달 계획 (활성 계획 기준)
         const activePlan = data.incomeExpensePlans.find(p=>p.isActive)||data.incomeExpensePlans.slice(-1)[0];
-        const planInc = activePlan ? activePlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0) : 0;
-        const planExp = activePlan ? activePlan.items.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+i.amount,0) : 0;
+        if(!activePlan) return null;
+        // 컬럼 정의: 수입 / 고정지출 / 생활비 / 저축 / 연금
+        const COLS = [
+          {key:"income", label:"수입", cats:["regular_income"], color:"#4F86C6"},
+          {key:"fixed", label:"고정지출", cats:["fixed","financial_cost"], color:"#E85D75"},
+          {key:"living", label:"생활비", cats:["living"], color:"#9B6FD4"},
+          {key:"savings", label:"저축", cats:["savings"], color:"#82C596"},
+          {key:"pension", label:"연금", cats:["pension_exp"], color:"#E8A87C"},
+        ];
+        const getPlan = (cats) => cats.reduce((s,c)=>s+activePlan.items.filter(i=>i.category===c).reduce((ss,i)=>ss+i.amount,0),0);
+        const getActual = (a, cats) => {
+          if(!a) return null;
+          return [...a.items,...(a.extraItems||[])].filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+        };
+        const months = Array.from({length:12},(_,i)=>`${thisYear}-${String(i+1).padStart(2,"0")}`);
+        const now = thisYearMonth();
         return (
           <Card>
-            <div className="flex items-center justify-between mb-3">
-              <SectionTitle>💰 수입/지출</SectionTitle>
+            <SectionTitle>💰 수입/지출 현황</SectionTitle>
+            <div className="overflow-x-auto -mx-2">
+              <table className="w-full text-xs min-w-[340px]">
+                <thead>
+                  <tr className="border-b border-gray-100">
+                    <th className="text-left py-2 pl-2 text-gray-400 font-semibold w-12">월</th>
+                    {COLS.map(c=><th key={c.key} className="text-right py-2 pr-2 font-semibold" style={{color:c.color}}>{c.label}</th>)}
+                  </tr>
+                  <tr className="border-b-2 border-gray-200 bg-gray-50">
+                    <td className="py-1.5 pl-2 text-gray-400 font-bold">계획</td>
+                    {COLS.map(c=><td key={c.key} className="py-1.5 pr-2 text-right font-bold text-gray-500">{fmtShort(getPlan(c.cats))}</td>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {months.map(ym=>{
+                    const a = data.monthlyActuals.find(x=>x.yearMonth===ym);
+                    const isFuture = ym > now;
+                    const isEntered = !!a;
+                    return (
+                      <tr key={ym} className={`border-b border-gray-50 ${isFuture?"opacity-30":isEntered?"":"opacity-50"}`}>
+                        <td className="py-1.5 pl-2 font-semibold text-gray-600">{ym.slice(5)}월</td>
+                        {COLS.map(c=>{
+                          const val = isEntered ? getActual(a,c.cats) : isFuture ? null : getPlan(c.cats);
+                          const plan = getPlan(c.cats);
+                          const isOver = val!=null && c.key!=="income" && c.key!=="savings" && c.key!=="pension" && val>plan;
+                          const isUnder = val!=null && (c.key==="savings"||c.key==="pension") && val<plan;
+                          return <td key={c.key} className={`py-1.5 pr-2 text-right font-semibold ${isFuture?"text-gray-300":isEntered?(isOver?"text-red-500":isUnder?"text-orange-400":"text-gray-700"):"text-gray-300 italic"}`}>
+                            {val!=null?fmtShort(val):"-"}
+                          </td>;
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-gray-200 bg-gray-50">
+                    <td className="py-1.5 pl-2 text-gray-500 font-bold">누적</td>
+                    {COLS.map(c=>{
+                      const tot = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>c.cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+                      return <td key={c.key} className="py-1.5 pr-2 text-right font-bold" style={{color:c.color}}>{tot>0?fmtShort(tot):"-"}</td>;
+                    })}
+                  </tr>
+                </tfoot>
+              </table>
             </div>
-            {/* 이달 */}
-            <p className="text-xs font-bold text-gray-400 mb-2">📅 이달 ({ymLabel(thisYM)})</p>
-            {thisActual ? (
-              <div className="grid grid-cols-3 gap-2 text-center mb-4">
-                {[["수입",tInc,planInc,"text-blue-600"],["정기지출",tExp,planExp,"text-red-500"],["순저축",tInc-tExp,planInc-planExp,(tInc-tExp)>=0?"text-green-600":"text-red-500"]].map(([l,v,p,c])=>(
-                  <div key={l} className="p-2 rounded-xl bg-gray-50">
-                    <p className="text-xs text-gray-400 mb-0.5">{l}</p>
-                    <p className={`text-sm font-bold ${c}`}>{fmtShort(v)}</p>
-                    {p!=null&&<p className="text-xs text-gray-300">계획 {fmtShort(p)}</p>}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="grid grid-cols-3 gap-2 text-center mb-4">
-                {[["수입","미입력",planInc,"text-gray-400"],["정기지출","미입력",planExp,"text-gray-400"],["순저축","미입력",planInc-planExp,"text-gray-400"]].map(([l,v,p,c])=>(
-                  <div key={l} className="p-2 rounded-xl bg-gray-50">
-                    <p className="text-xs text-gray-400 mb-0.5">{l}</p>
-                    <p className="text-xs text-gray-300 py-1">{v}</p>
-                    {p!=null&&<p className="text-xs text-gray-400 font-semibold">계획 {fmtShort(p)}</p>}
-                  </div>
-                ))}
-              </div>
-            )}
-            {/* 올해 누적 */}
-            {yearActuals.length>0&&<>
-              <p className="text-xs font-bold text-gray-400 mb-2">📊 올해 누적 ({thisYear}, {yearActuals.length}개월)</p>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="p-2 rounded-xl bg-blue-50"><p className="text-xs text-gray-400 mb-0.5">수입</p><p className="text-sm font-bold text-blue-600">{fmtShort(ytdInc)}</p></div>
-                <div className="p-2 rounded-xl bg-red-50"><p className="text-xs text-gray-400 mb-0.5">지출</p><p className="text-sm font-bold text-red-500">{fmtShort(ytdExp)}</p><p className="text-xs text-gray-300">비정기 {fmtShort(ytdIrregExp)}</p></div>
-                <div className={`p-2 rounded-xl ${ytdInc-ytdExp>=0?"bg-green-50":"bg-red-50"}`}><p className="text-xs text-gray-400 mb-0.5">순저축</p><p className={`text-sm font-bold ${ytdInc-ytdExp>=0?"text-green-600":"text-red-500"}`}>{fmtShort(ytdInc-ytdExp)}</p></div>
-              </div>
-            </>}
           </Card>
         );
       })()}
