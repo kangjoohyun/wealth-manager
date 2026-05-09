@@ -147,19 +147,19 @@ const SettingsSection = ({ data, setData }) => {
   const [form, setForm] = useState({ name: "", color: MEMBER_COLORS[0] });
   const [cd, setCd] = useState(null);
 
-  // Claude Vision 파싱
+  // Claude Vision 파싱 (다중 이미지)
   const [visionModal, setVisionModal] = useState(false);
-  const [visionImgs, setVisionImgs] = useState([]);
-  const [visionProgress, setVisionProgress] = useState("");
-  const [visionResult, setVisionResult] = useState(null);  // 파싱된 계좌 배열
+  const [visionImgs, setVisionImgs] = useState([]); // [{b64, type, name}]
+  const [visionResult, setVisionResult] = useState(null);
   const [visionLoading, setVisionLoading] = useState(false);
+  const [visionProgress, setVisionProgress] = useState(""); // 진행상황 텍스트
   const [visionError, setVisionError] = useState("");
   const [visionMember, setVisionMember] = useState(data.members[0]?.id || "");
 
   const open = (m) => { setEm(m||null); setForm(m ? { name: m.name, color: m.color } : { name: "", color: MEMBER_COLORS[0] }); setMm(true); };
   const save = () => { if (!form.name.trim()) return; setData((d) => ({ ...d, members: em ? d.members.map((m) => m.id === em.id ? { ...m, ...form } : m) : [...d.members, { id: genId(), ...form }] })); setMm(false); };
 
-  // 이미지 → base64
+  // 다중 이미지 → base64 배열
   const handleImgUpload = (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
@@ -172,6 +172,7 @@ const SettingsSection = ({ data, setData }) => {
     }))).then((imgs) => setVisionImgs((prev) => [...prev, ...imgs]));
   };
 
+  // 이미지 한 장 파싱
   const parseOneImage = async (img) => {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -179,10 +180,15 @@ const SettingsSection = ({ data, setData }) => {
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
         max_tokens: 1000,
-        messages: [{ role: "user", content: [
-          { type: "image", source: { type: "base64", media_type: img.type, data: img.b64 } },
-          { type: "text", text: `이 이미지에서 계좌/금융상품 정보를 추출해줘. 반드시 JSON 배열만 반환하고 다른 텍스트는 절대 포함하지 마.\n형식: [{"bank":"은행명","accountNumber":"계좌번호(없으면 빈문자열)","description":"상품명/설명","balance":잔액숫자(없으면0),"category":"cash|domestic_stock|foreign_stock_etf|pension|fund|other"}]\ncategory 규칙: 예금/입출금→cash, 국내주식/ETF→domestic_stock, 해외주식/ETF→foreign_stock_etf, IRP/연금저축/연금→pension, 펀드→fund, 나머지→other` }
-        ]}]
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: img.type, data: img.b64 } },
+            { type: "text", text: `이 이미지에서 계좌/금융상품 정보를 추출해줘. 반드시 JSON 배열만 반환하고 다른 텍스트는 절대 포함하지 마.
+형식: [{"bank":"은행명","accountNumber":"계좌번호(없으면 빈문자열)","description":"상품명/설명","balance":잔액숫자(없으면0),"category":"cash|domestic_stock|foreign_stock_etf|pension|fund|other"}]
+category 규칙: 예금/입출금→cash, 국내주식/ETF→domestic_stock, 해외주식/ETF→foreign_stock_etf, IRP/연금저축/연금→pension, 펀드→fund, 나머지→other` }
+          ]
+        }]
       })
     });
     const json = await res.json();
@@ -192,6 +198,7 @@ const SettingsSection = ({ data, setData }) => {
     return JSON.parse(match[0]);
   };
 
+  // 전체 파싱 실행 (순서대로)
   const runVision = async () => {
     if (!visionImgs.length) return;
     setVisionLoading(true);
@@ -213,7 +220,6 @@ const SettingsSection = ({ data, setData }) => {
     }
   };
 
-
   // 선택된 항목을 계좌에 추가
   const applyVisionResult = () => {
     const toAdd = visionResult.filter((r) => r.selected).map((r) => ({
@@ -229,7 +235,7 @@ const SettingsSection = ({ data, setData }) => {
     }));
     setData((d) => ({ ...d, accounts: [...d.accounts, ...toAdd] }));
     setVisionModal(false);
-    setVisionImg(null);
+    setVisionImgs([]);
     setVisionResult(null);
     alert(`${toAdd.length}개 계좌가 추가되었습니다!`);
   };
@@ -331,36 +337,59 @@ const SettingsSection = ({ data, setData }) => {
 
           {/* 이미지 업로드 */}
           <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-2">스크린샷 업로드</label>
-<label className="cursor-pointer flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl p-5 hover:border-[#1a2744] transition">
-  <div className="text-center">
-    <div className="text-3xl mb-1">📸</div>
-    <p className="text-sm text-gray-500">탭해서 사진 선택</p>
-    <p className="text-xs text-gray-400 mt-0.5">여러 장 동시 선택 가능</p>
-  </div>
-  <input type="file" accept="image/*" multiple className="hidden" onChange={handleImgUpload} />
-</label>
+            {/* 이미지 업로드 영역 */}
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-2">
+                스크린샷 업로드 <span className="text-blue-500 normal-case font-normal">(여러 장 동시 선택 가능)</span>
+              </label>
+              <label className="cursor-pointer flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl p-5 hover:border-[#1a2744] transition">
+                <div className="text-center">
+                  <div className="text-3xl mb-1">📸</div>
+                  <p className="text-sm text-gray-500">탭해서 사진 선택</p>
+                  <p className="text-xs text-gray-400 mt-0.5">여러 장 동시 선택 가능</p>
+                </div>
+                <input type="file" accept="image/*" multiple className="hidden" onChange={handleImgUpload} />
+              </label>
+            </div>
 
-{visionImgs.length > 0 && !visionResult && (
-  <div className="space-y-2">
-    <div className="flex items-center justify-between">
-      <p className="text-xs font-semibold text-gray-600">{visionImgs.length}장 선택됨</p>
-      <button onClick={() => setVisionImgs([])} className="text-xs text-red-400">전체 삭제</button>
-    </div>
-    <div className="flex gap-2 flex-wrap">
-      {visionImgs.map((img, i) => (
-        <div key={i} className="relative">
-          <img src={`data:${img.type};base64,${img.b64}`} className="w-16 h-16 rounded-lg object-cover border border-gray-200" alt={`img${i+1}`} />
-          <button onClick={() => setVisionImgs((prev) => prev.filter((_,j) => j !== i))} className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-xs flex items-center justify-center">×</button>
-        </div>
-
+            {/* 선택된 이미지 목록 */}
+            {visionImgs.length > 0 && !visionResult && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-gray-600">{visionImgs.length}장 선택됨</p>
+                  <button onClick={() => setVisionImgs([])} className="text-xs text-red-400 hover:text-red-600">전체 삭제</button>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {visionImgs.map((img, i) => (
+                    <div key={i} className="relative">
+                      <img src={`data:${img.type};base64,${img.b64}`} className="w-16 h-16 rounded-lg object-cover border border-gray-200" alt={`img${i+1}`} />
+                      <button onClick={() => setVisionImgs((prev) => prev.filter((_,j) => j !== i))} className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-xs flex items-center justify-center leading-none">×</button>
+                    </div>
+                  ))}
+                  {/* 추가 업로드 버튼 */}
+                  <label className="cursor-pointer w-16 h-16 rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 hover:border-[#1a2744] transition">
+                    <span className="text-xl">+</span>
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={handleImgUpload} />
+                  </label>
+                </div>
+                <Btn onClick={runVision} disabled={visionLoading} className="w-full">
+                  {visionLoading ? `⏳ ${visionProgress}` : `🤖 ${visionImgs.length}장 AI 분석 시작`}
+                </Btn>
+              </div>
+            )}
 
           {visionError && <p className="text-xs text-red-500 p-3 bg-red-50 rounded-xl">{visionError}</p>}
 
           {/* 파싱 결과 */}
           {visionResult && (
             <div className="space-y-3">
-              <p className="text-sm font-semibold text-gray-700">추출된 계좌 ({visionResult.filter((r)=>r.selected).length}개 선택됨)</p>
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-gray-700">추출된 계좌 ({visionResult.filter((r)=>r.selected).length}/{visionResult.length}개 선택)</p>
+                <div className="flex gap-2">
+                  <button onClick={() => setVisionResult((p) => p.map((x) => ({...x,selected:true})))} className="text-xs text-blue-500">전체선택</button>
+                  <button onClick={() => setVisionResult((p) => p.map((x) => ({...x,selected:false})))} className="text-xs text-gray-400">전체해제</button>
+                </div>
+              </div>
               <div className="space-y-2 max-h-64 overflow-y-auto">
                 {visionResult.map((r, i) => (
                   <div key={i} className={`p-3 rounded-xl border transition ${r.selected ? "border-[#1a2744] bg-blue-50" : "border-gray-100 bg-gray-50 opacity-60"}`}>
@@ -373,13 +402,15 @@ const SettingsSection = ({ data, setData }) => {
                           <Badge color={ACCOUNT_CATEGORIES.find((c)=>c.value===r.category)?.color||"#aaa"} label={ACCOUNT_CATEGORIES.find((c)=>c.value===r.category)?.label||r.category} />
                         </div>
                         {r.accountNumber && <p className="text-xs text-gray-400 font-mono">{r.accountNumber}</p>}
-                        <div className="flex gap-4 text-xs">
-                          <span className="text-gray-500">잔액: <span className="font-bold text-gray-700">{fmt(r.balance)}</span></span>
-                        </div>
-                        {/* 잔액 수정 */}
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-xs text-gray-400">잔액 수정:</span>
-                          <input type="number" value={r.balance} onChange={(e) => setVisionResult((prev) => prev.map((x,j) => j===i ? {...x,balance:Number(e.target.value)} : x))} className="w-32 border border-gray-200 rounded-lg px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#1a2744]/30" />
+                        <div className="grid grid-cols-2 gap-1 mt-1">
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-gray-400">은행:</span>
+                            <input value={r.bank} onChange={(e) => setVisionResult((prev) => prev.map((x,j) => j===i ? {...x,bank:e.target.value} : x))} className="flex-1 border border-gray-200 rounded px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#1a2744]/30 bg-white" />
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-gray-400">잔액:</span>
+                            <input type="number" value={r.balance} onChange={(e) => setVisionResult((prev) => prev.map((x,j) => j===i ? {...x,balance:Number(e.target.value)} : x))} className="flex-1 border border-gray-200 rounded px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#1a2744]/30 bg-white" />
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -387,7 +418,7 @@ const SettingsSection = ({ data, setData }) => {
                 ))}
               </div>
               <div className="flex gap-2 justify-end">
-                <Btn variant="secondary" onClick={() => { setVisionImg(null); setVisionResult(null); }}>다시 업로드</Btn>
+                <Btn variant="secondary" onClick={() => { setVisionImgs([]); setVisionResult(null); }}>다시 업로드</Btn>
                 <Btn onClick={applyVisionResult} disabled={!visionResult.some((r)=>r.selected)}>✅ 선택 항목 추가</Btn>
               </div>
             </div>
