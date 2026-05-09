@@ -21,12 +21,21 @@ const DEFAULT_DATA = {
 
 const ACCOUNT_CATEGORIES = [
   { value: "cash", label: "현금/예금", color: "#4F86C6" },
-  { value: "domestic_stock", label: "국내주식", color: "#E85D75" },
-  { value: "foreign_stock_etf", label: "해외주식/ETF", color: "#9B6FD4" },
+  { value: "domestic_stock", label: "주식(국내)", color: "#E85D75" },
+  { value: "foreign_stock_etf", label: "주식(해외/ETF)", color: "#E85D75" },
   { value: "pension", label: "연금", color: "#E8A87C" },
   { value: "fund", label: "펀드", color: "#82C596" },
   { value: "other", label: "기타", color: "#A0A0A0" },
 ];
+// 주식 통합 표시용
+const DISPLAY_CATEGORIES = [
+  { value: "cash", label: "현금/예금", color: "#4F86C6" },
+  { value: "stock", label: "주식", color: "#E85D75" },
+  { value: "pension", label: "연금", color: "#E8A87C" },
+  { value: "fund", label: "펀드", color: "#82C596" },
+  { value: "other", label: "기타", color: "#A0A0A0" },
+];
+const toDisplayCat = (cat) => (cat === "domestic_stock" || cat === "foreign_stock_etf") ? "stock" : cat;
 
 const INCOME_CATEGORIES = [
   { value: "regular_income", label: "정기수입", color: "#4F86C6", isIncome: true },
@@ -42,7 +51,12 @@ const EXPENSE_CATEGORIES = [
   { value: "irregular", label: "비정기지출", color: "#F0C040" },
 ];
 
+const REGULAR_INCOME_CATS = INCOME_CATEGORIES.filter(c => c.value === "regular_income");
+const IRREGULAR_INCOME_CATS = INCOME_CATEGORIES.filter(c => c.value === "irregular_income");
+const REGULAR_EXPENSE_CATS = EXPENSE_CATEGORIES.filter(c => c.value !== "irregular");
+const IRREGULAR_EXPENSE_CATS = EXPENSE_CATEGORIES.filter(c => c.value === "irregular");
 const ALL_PLAN_CATEGORIES = [...INCOME_CATEGORIES, ...EXPENSE_CATEGORIES];
+const REGULAR_CATEGORIES = [...REGULAR_INCOME_CATS, ...REGULAR_EXPENSE_CATS];
 const MEMBER_COLORS = ["#4F86C6","#E8A87C","#82C596","#E85D75","#9B6FD4","#F0C040","#5BC8C0","#C87060"];
 
 // ─────────────────────────────────────────────
@@ -286,7 +300,7 @@ category 규칙: 예금/입출금→cash, 국내주식/ETF→domestic_stock, 해
       <Card>
         <SectionTitle>🤖 AI 계좌 자동 파싱</SectionTitle>
         <p className="text-xs text-gray-500 mb-3">은행 앱 스크린샷을 업로드하면 Claude가 계좌 정보를 자동으로 추출합니다.</p>
-        <Btn size="sm" variant="secondary" onClick={() => { setVisionMember(data.members[0]?.id||""); setVisionImg([]); setVisionResult(null); setVisionError(""); setVisionModal(true); }}>
+        <Btn size="sm" variant="secondary" onClick={() => { setVisionMember(data.members[0]?.id||""); setVisionImg(null); setVisionResult(null); setVisionError(""); setVisionModal(true); }}>
           📸 스크린샷으로 계좌 추가
         </Btn>
       </Card>
@@ -424,7 +438,6 @@ category 규칙: 예금/입출금→cash, 국내주식/ETF→domestic_stock, 해
             </div>
           )}
         </div>
-        </div>
       </Modal>
 
       <Confirm open={!!cd} message="이 구성원을 삭제하시겠습니까?" onConfirm={() => { setData((d) => ({ ...d, members: d.members.filter((m) => m.id !== cd) })); setCd(null); }} onCancel={() => setCd(null)} />
@@ -553,11 +566,12 @@ const IncomeExpenseSection = ({ data, setData }) => {
   };
 
   const monthlyData = useMemo(() => data.monthlyActuals.sort((a,b)=>a.yearMonth.localeCompare(b.yearMonth)).map((a) => {
-    const inc = (items) => items.filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||i.amount||0),0);
-    const exp = (items) => items.filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||i.amount||0),0);
-    const income = inc(a.items) + inc(a.extraItems||[]);
-    const expense = exp(a.items) + exp(a.extraItems||[]);
-    return { ym:a.yearMonth, label:ymLabel(a.yearMonth), income, expense, net:income-expense };
+    const all=[...a.items,...(a.extraItems||[])];
+    const regInc=all.filter((i)=>i.category==="regular_income").reduce((s,i)=>s+(i.actualAmount||i.amount||0),0);
+    const regExp=all.filter((i)=>REGULAR_EXPENSE_CATS.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||i.amount||0),0);
+    const irregInc=all.filter((i)=>i.category==="irregular_income").reduce((s,i)=>s+(i.actualAmount||i.amount||0),0);
+    const irregExp=all.filter((i)=>i.category==="irregular").reduce((s,i)=>s+(i.actualAmount||i.amount||0),0);
+    return { ym:a.yearMonth, label:ymLabel(a.yearMonth), income:regInc, expense:regExp, net:regInc-regExp, irregInc, irregExp };
   }), [data.monthlyActuals]);
 
   const yearData = useMemo(() => { const f=monthlyData.filter((d)=>d.ym.startsWith(sumYear)); return { income:f.reduce((s,d)=>s+d.income,0), expense:f.reduce((s,d)=>s+d.expense,0), months:f }; }, [monthlyData,sumYear]);
@@ -684,11 +698,17 @@ const IncomeExpenseSection = ({ data, setData }) => {
         {sumTab==="monthly" && <div className="space-y-4">
           <Card className="!p-4"><div className="flex items-center gap-3"><label className="text-sm font-semibold text-gray-600">월 선택:</label><input type="month" value={sumYM} onChange={(e)=>setSumYM(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2744]/30"/></div></Card>
           {(() => { const a=data.monthlyActuals.find((x)=>x.yearMonth===sumYM); if(!a) return <Card><div className="text-center py-8 text-gray-400 text-sm">해당 월 실적이 없습니다</div></Card>;
-            const inc=a.items.filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0)+(a.extraItems||[]).filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0);
-            const exp=a.items.filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0)+(a.extraItems||[]).filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0);
-            const net=inc-exp;
+            const allItems=[...a.items,...(a.extraItems||[])];
+            const regInc=allItems.filter((i)=>i.category==="regular_income").reduce((s,i)=>s+(i.actualAmount||0),0);
+            const irregInc=allItems.filter((i)=>i.category==="irregular_income").reduce((s,i)=>s+(i.actualAmount||0),0);
+            const regExp=allItems.filter((i)=>REGULAR_EXPENSE_CATS.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0);
+            const irregExp=allItems.filter((i)=>i.category==="irregular").reduce((s,i)=>s+(i.actualAmount||0),0);
+            const inc=regInc; const exp=regExp; const net=inc-exp;
             return <>
-              <div className="grid grid-cols-3 gap-3">{[["수입",inc,"text-blue-600"],["지출",exp,"text-red-500"],["순저축",net,net>=0?"text-green-600":"text-red-500"]].map(([l,v,c])=><Card key={l} className="!p-4 text-center"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-sm font-bold ${c}`}>{fmtShort(v)}</p></Card>)}</div>
+              <p className="text-xs font-bold text-gray-500 mb-2">📅 정기 수입/지출</p>
+              <div className="grid grid-cols-3 gap-3 mb-4">{[["정기수입",regInc,"text-blue-600"],["정기지출",regExp,"text-red-500"],["정기순저축",net,net>=0?"text-green-600":"text-red-500"]].map(([l,v,c])=><Card key={l} className="!p-4 text-center"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-sm font-bold ${c}`}>{fmtShort(v)}</p></Card>)}</div>
+              {(irregInc>0||irregExp>0)&&<><p className="text-xs font-bold text-gray-500 mb-2">⚡ 비정기 수입/지출</p>
+              <div className="grid grid-cols-3 gap-3 mb-4">{[["비정기수입",irregInc,"text-blue-400"],["비정기지출",irregExp,"text-orange-500"],["비정기순",irregInc-irregExp,(irregInc-irregExp)>=0?"text-green-500":"text-orange-500"]].map(([l,v,c])=><Card key={l} className="!p-4 text-center"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-sm font-bold ${c}`}>{fmtShort(v)}</p></Card>)}</div></>}
               {monthCatPie.length>0&&<Card><SectionTitle>지출 카테고리 비중</SectionTitle><ResponsiveContainer width="100%" height={220}><PieChart><Pie data={monthCatPie} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={11}>{monthCatPie.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart></ResponsiveContainer></Card>}
               <Card><SectionTitle>계획 vs 실적</SectionTitle><div className="space-y-1">{a.items.map((item)=>{const diff=item.actualAmount-item.plannedAmount; const isInc=!!INCOME_CATEGORIES.find((c)=>c.value===item.category); return(<div key={item.planItemId} className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 text-xs"><span className="text-gray-700 flex-1">{item.label}</span><span className="text-gray-400 w-20 text-right">{fmtShort(item.plannedAmount)}</span><span className="font-bold w-20 text-right text-gray-800">{fmtShort(item.actualAmount)}</span><span className={`w-16 text-right font-bold ${diff>0?(isInc?"text-green-600":"text-red-500"):diff<0?(isInc?"text-red-500":"text-green-600"):"text-gray-400"}`}>{diff>0?"+":""}{fmtShort(diff)}</span></div>);})}
               {(a.extraItems||[]).map((item)=><div key={item.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-blue-50 text-xs"><span className="text-blue-700 flex-1">{item.label} <span className="text-blue-400">(추가)</span></span><span className="font-bold w-20 text-right text-blue-800">{fmtShort(item.actualAmount||item.amount)}</span></div>)}</div></Card>
@@ -748,7 +768,13 @@ const BalanceSheetSection = ({ data, setData }) => {
             <div key={s.id} className={`p-3 rounded-xl border cursor-pointer transition-all ${selSnap===s.id?"border-[#1a2744] bg-blue-50":"border-gray-100 bg-gray-50 hover:bg-gray-100"}`} onClick={()=>setSelSnap(selSnap===s.id?null:s.id)}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3"><span className="text-sm font-bold text-gray-700">{ymLabel(s.yearMonth)}</span>{s.memo&&<span className="text-xs text-gray-400">{s.memo}</span>}</div>
-                <div className="flex items-center gap-3"><span className="text-sm font-bold text-[#1a2744]">{fmtShort(s.netWorth)}</span>{diff!=null&&<span className={`text-xs font-bold ${diff>=0?"text-green-600":"text-red-500"}`}>{diff>=0?"+":""}{fmtShort(diff)}</span>}<Btn size="sm" variant="danger" onClick={(e)=>{e.stopPropagation();setCd(s.id);}}>삭제</Btn></div>
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                  <div className="text-right"><p className="text-xs text-gray-400">총자산</p><p className="text-xs font-bold text-[#4F86C6]">{fmtShort(s.totalAssets)}</p></div>
+                  <div className="text-right"><p className="text-xs text-gray-400">부채</p><p className="text-xs font-bold text-red-400">{fmtShort(s.totalLiabilities)}</p></div>
+                  <div className="text-right"><p className="text-xs text-gray-400">순자산</p><p className="text-sm font-bold text-[#1a2744]">{fmtShort(s.netWorth)}</p></div>
+                  {diff!=null&&<span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${diff>=0?"bg-green-50 text-green-600":"bg-red-50 text-red-500"}`}>{diff>=0?"+":""}{fmtShort(diff)}</span>}
+                  <Btn size="sm" variant="danger" onClick={(e)=>{e.stopPropagation();setCd(s.id);}}>삭제</Btn>
+                </div>
               </div>
               {selSnap===s.id&&<div className="mt-3 pt-3 border-t border-blue-100 space-y-3">
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{[["총자산",s.totalAssets],["부동산",s.realEstateAssets],["금융자산",s.financialAssets],["총부채",s.totalLiabilities]].map(([l,v])=><div key={l} className="bg-white rounded-lg p-2 text-center"><p className="text-xs text-gray-400">{l}</p><p className="text-xs font-bold text-gray-700">{fmtShort(v)}</p></div>)}</div>
@@ -781,7 +807,7 @@ const DashboardSection = ({ data }) => {
   const getIncExp=(a)=>{if(!a)return[null,null]; const inc=a.items.filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0)+(a.extraItems||[]).filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0); const exp=a.items.filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0)+(a.extraItems||[]).filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0); return[inc,exp];};
   const [tInc,tExp]=getIncExp(thisActual);
   const assetPie=[{name:"부동산",value:totR,color:"#82C596"},{name:"금융자산",value:totF,color:"#4F86C6"}].filter((d)=>d.value>0);
-  const finPie=ACCOUNT_CATEGORIES.map((cat)=>({name:cat.label,value:data.accounts.filter((a)=>a.category===cat.value).reduce((s,a)=>s+(a.balance||0),0),color:cat.color})).filter((d)=>d.value>0);
+  const finPie=DISPLAY_CATEGORIES.map((cat)=>({name:cat.label,value:data.accounts.filter((a)=>toDisplayCat(a.category)===cat.value).reduce((s,a)=>s+(a.balance||0),0),color:cat.color})).filter((d)=>d.value>0);
   const snapChart=[...data.balanceSheetSnapshots].sort((a,b)=>a.yearMonth.localeCompare(b.yearMonth)).slice(-12).map((s)=>({label:ymLabel(s.yearMonth),순자산:s.netWorth}));
   return (
     <div className="space-y-4">
@@ -803,7 +829,36 @@ const DashboardSection = ({ data }) => {
         {thisActual?<div className="grid grid-cols-3 gap-3 text-center">{[["수입",tInc,"text-blue-600"],["지출",tExp,"text-red-500"],["순저축",tInc-tExp,(tInc-tExp)>=0?"text-green-600":"text-red-500"]].map(([l,v,c])=><div key={l} className="p-3 rounded-xl bg-gray-50"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-base font-bold ${c}`}>{fmtShort(v)}</p></div>)}</div>
         :<p className="text-sm text-gray-400 text-center py-4">이달 실적이 아직 입력되지 않았습니다</p>}
       </Card>
-      {snapChart.length>=2&&<Card><SectionTitle>📈 순자산 추이</SectionTitle><ResponsiveContainer width="100%" height={180}><LineChart data={snapChart} margin={{top:5,right:5,bottom:5,left:0}}><CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/><XAxis dataKey="label" tick={{fontSize:11}}/><YAxis tickFormatter={(v)=>fmtShort(v)} tick={{fontSize:11}}/><Tooltip formatter={(v)=>fmt(v)}/><Line type="monotone" dataKey="순자산" stroke="#4F86C6" strokeWidth={2.5} dot={{fill:"#4F86C6",r:3}}/></LineChart></ResponsiveContainer></Card>}
+      {snapChart.length>=1&&<Card>
+        <SectionTitle>📈 자산 추이</SectionTitle>
+        {snapChart.length>=2&&<ResponsiveContainer width="100%" height={200}>
+          <LineChart data={[...data.balanceSheetSnapshots].sort((a,b)=>a.yearMonth.localeCompare(b.yearMonth)).slice(-12).map((s)=>({label:ymLabel(s.yearMonth),총자산:s.totalAssets,부채:s.totalLiabilities,순자산:s.netWorth}))} margin={{top:5,right:5,bottom:5,left:0}}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/>
+            <XAxis dataKey="label" tick={{fontSize:10}}/>
+            <YAxis tickFormatter={(v)=>fmtShort(v)} tick={{fontSize:10}}/>
+            <Tooltip formatter={(v)=>fmt(v)}/>
+            <Legend wrapperStyle={{fontSize:11}}/>
+            <Line type="monotone" dataKey="총자산" stroke="#4F86C6" strokeWidth={2} dot={false}/>
+            <Line type="monotone" dataKey="부채" stroke="#E85D75" strokeWidth={2} dot={false}/>
+            <Line type="monotone" dataKey="순자산" stroke="#82C596" strokeWidth={2.5} dot={{fill:"#82C596",r:3}}/>
+          </LineChart>
+        </ResponsiveContainer>}
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead><tr className="border-b border-gray-100">{["월","총자산","부채","순자산","전월대비"].map(h=><th key={h} className="text-right py-1.5 pr-2 text-gray-400 font-semibold first:text-left">{h}</th>)}</tr></thead>
+            <tbody>{[...data.balanceSheetSnapshots].sort((a,b)=>b.yearMonth.localeCompare(a.yearMonth)).slice(0,12).map((s,i,arr)=>{
+              const prev=arr[i+1]; const diff=prev?s.netWorth-prev.netWorth:null;
+              return <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50">
+                <td className="py-1.5 pr-2 font-semibold text-gray-700">{ymLabel(s.yearMonth)}</td>
+                <td className="py-1.5 pr-2 text-right text-gray-600">{fmtShort(s.totalAssets)}</td>
+                <td className="py-1.5 pr-2 text-right text-red-400">{fmtShort(s.totalLiabilities)}</td>
+                <td className="py-1.5 pr-2 text-right font-bold text-[#1a2744]">{fmtShort(s.netWorth)}</td>
+                <td className="py-1.5 text-right font-bold">{diff!=null?<span className={diff>=0?"text-green-600":"text-red-500"}>{diff>=0?"+":""}{fmtShort(diff)}</span>:<span className="text-gray-300">-</span>}</td>
+              </tr>;
+            })}</tbody>
+          </table>
+        </div>
+      </Card>}
       <Card><SectionTitle>📌 요약</SectionTitle><div className="grid grid-cols-2 gap-2 text-sm">{[["계좌 수",data.accounts.length+"개"],["부동산",data.realEstate.length+"건"],["대출",data.loans.length+"건"],["월 총 적립금",fmtShort(data.accounts.reduce((s,a)=>s+(a.monthlyDeposit||0),0))]].map(([l,v])=><div key={l} className="flex justify-between p-2 rounded-lg bg-gray-50"><span className="text-gray-500">{l}</span><span className="font-bold text-gray-800">{v}</span></div>)}</div></Card>
     </div>
   );
