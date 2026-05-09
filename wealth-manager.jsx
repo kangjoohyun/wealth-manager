@@ -332,25 +332,28 @@ const SettingsSection = ({ data, setData }) => {
           {/* 이미지 업로드 */}
           <div>
             <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-2">스크린샷 업로드</label>
-            <label className="cursor-pointer flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl p-6 hover:border-[#1a2744] transition">
-              {visionImg ? (
-                <img src={`data:${visionImgType};base64,${visionImg}`} className="max-h-48 rounded-lg object-contain" alt="preview" />
-              ) : (
-                <div className="text-center">
-                  <div className="text-4xl mb-2">🖼</div>
-                  <p className="text-sm text-gray-500">이미지 클릭하여 업로드</p>
-                  <p className="text-xs text-gray-400 mt-1">PNG, JPG, JPEG 지원</p>
-                </div>
-              )}
-              <input type="file" accept="image/*" className="hidden" onChange={handleImgUpload} />
-            </label>
-          </div>
+<label className="cursor-pointer flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl p-5 hover:border-[#1a2744] transition">
+  <div className="text-center">
+    <div className="text-3xl mb-1">📸</div>
+    <p className="text-sm text-gray-500">탭해서 사진 선택</p>
+    <p className="text-xs text-gray-400 mt-0.5">여러 장 동시 선택 가능</p>
+  </div>
+  <input type="file" accept="image/*" multiple className="hidden" onChange={handleImgUpload} />
+</label>
 
-          {visionImg && !visionResult && (
-            <Btn onClick={runVision} disabled={visionLoading} className="w-full">
-              {visionLoading ? "⏳ AI 분석 중..." : "🤖 AI로 계좌 정보 추출"}
-            </Btn>
-          )}
+{visionImgs.length > 0 && !visionResult && (
+  <div className="space-y-2">
+    <div className="flex items-center justify-between">
+      <p className="text-xs font-semibold text-gray-600">{visionImgs.length}장 선택됨</p>
+      <button onClick={() => setVisionImgs([])} className="text-xs text-red-400">전체 삭제</button>
+    </div>
+    <div className="flex gap-2 flex-wrap">
+      {visionImgs.map((img, i) => (
+        <div key={i} className="relative">
+          <img src={`data:${img.type};base64,${img.b64}`} className="w-16 h-16 rounded-lg object-cover border border-gray-200" alt={`img${i+1}`} />
+          <button onClick={() => setVisionImgs((prev) => prev.filter((_,j) => j !== i))} className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-xs flex items-center justify-center">×</button>
+        </div>
+
 
           {visionError && <p className="text-xs text-red-500 p-3 bg-red-50 rounded-xl">{visionError}</p>}
 
