@@ -1232,13 +1232,16 @@ const IncomeExpenseSection = ({ data, setData }) => {
                 <div className="mt-3 space-y-1">{[...REGULAR_EXPENSE_CATS,...IRREGULAR_EXPENSE_CATS].map(cat=>{
                   const pv=planCatData.find(d=>d.name===cat.label)?.value||0;
                   const av=actCatData.find(d=>d.name===cat.label)?.value||0;
+                  const proj=projByCat[cat.value]||0;
                   if(!pv&&!av) return null;
+                  const diff = av>pv?"text-red-500":av<pv?"text-green-600":"text-gray-700";
                   return <div key={cat.value} className="flex items-center text-xs px-2 py-1.5 rounded-lg bg-gray-50">
                     <div className="w-2 h-2 rounded-full mr-2 shrink-0" style={{background:cat.color}}/>
                     <span className="flex-1 text-gray-600">{cat.label}</span>
-                    <span className="w-16 text-right text-gray-400">{fmtShort(pv)}</span>
+                    <span className="w-14 text-right text-gray-400">{fmtShort(pv)}</span>
                     <span className="w-4 text-center text-gray-300">→</span>
-                    <span className={`w-16 text-right font-bold ${av>pv?"text-red-500":av<pv?"text-green-600":"text-gray-700"}`}>{fmtShort(av)}</span>
+                    <span className={`font-bold ${diff}`}>{fmtShort(av)}</span>
+                    {nMonths>0&&nMonths<12&&<span className="text-gray-300 ml-1">({fmtShort(proj)})</span>}
                   </div>;
                 })}</div>
               </Card>}
