@@ -659,20 +659,76 @@ const IncomeExpenseSection = ({ data, setData }) => {
         </Card>
         {curPlan ? <Card>
           <div className="flex items-center justify-between mb-4"><SectionTitle>💡 {curPlan.label} {curPlan.isActive&&<Badge color="#4F86C6" label="활성"/>}</SectionTitle><Btn size="sm" onClick={()=>{setEi(null);setIForm({category:"regular_income",label:"",amount:"",memo:""});setIm(true);}}>+ 항목 추가</Btn></div>
-          {ALL_PLAN_CATEGORIES.map((cat) => { const items=curPlan.items.filter((i)=>i.category===cat.value); if(!items.length) return null; const tot=items.reduce((s,i)=>s+i.amount,0); return (
-            <div key={cat.value} className="mb-5">
-              <div className="flex items-center justify-between mb-2"><div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full" style={{background:cat.color}}/><span className="text-xs font-bold text-gray-500 uppercase tracking-wide">{cat.label}</span></div><span className={`text-xs font-bold ${cat.isIncome?"text-blue-600":"text-gray-600"}`}>{fmt(tot)}</span></div>
-              <div className="space-y-1">{items.map((item) => (
-                <div key={item.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition">
-                  <div><span className="text-sm text-gray-700">{item.label}</span>{item.memo&&<span className="text-xs text-gray-400 ml-2">{item.memo}</span>}</div>
-                  <div className="flex items-center gap-2"><span className="text-sm font-semibold text-gray-800">{fmt(item.amount)}</span><Btn size="sm" variant="ghost" onClick={()=>{setEi(item);setIForm({category:item.category,label:item.label,amount:String(item.amount),memo:item.memo||""});setIm(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCdi(item.id)}>삭제</Btn></div>
+          {/* 정기 섹션 */}
+          {(() => {
+            const regCats = REGULAR_CATEGORIES;
+            const regItems = regCats.map(cat => ({ cat, items: curPlan.items.filter(i => i.category === cat.value) })).filter(x => x.items.length > 0);
+            const regInc = curPlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0);
+            const regExp = curPlan.items.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+i.amount,0);
+            return regItems.length > 0 ? (
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-3 pb-2 border-b-2 border-blue-100">
+                  <span className="text-sm font-extrabold text-blue-700">📅 정기</span>
+                  <div className="flex gap-3 text-xs">
+                    <span className="text-blue-500">수입 {fmtShort(regInc)}</span>
+                    <span className="text-red-400">지출 {fmtShort(regExp)}</span>
+                    <span className={`font-bold ${(regInc-regExp)>=0?"text-green-600":"text-red-500"}`}>순 {fmtShort(regInc-regExp)}</span>
+                  </div>
                 </div>
-              ))}</div>
-            </div>
-          );})}
+                {regItems.map(({cat, items}) => {
+                  const tot = items.reduce((s,i)=>s+i.amount,0);
+                  return (
+                    <div key={cat.value} className="mb-4">
+                      <div className="flex items-center justify-between mb-2"><div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full" style={{background:cat.color}}/><span className="text-xs font-bold text-gray-500 uppercase tracking-wide">{cat.label}</span></div><span className={`text-xs font-bold ${cat.isIncome?"text-blue-600":"text-gray-600"}`}>{fmt(tot)}</span></div>
+                      <div className="space-y-1">{items.map(item => (
+                        <div key={item.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition">
+                          <div><span className="text-sm text-gray-700">{item.label}</span>{item.memo&&<span className="text-xs text-gray-400 ml-2">{item.memo}</span>}</div>
+                          <div className="flex items-center gap-2"><span className="text-sm font-semibold text-gray-800">{fmt(item.amount)}</span><Btn size="sm" variant="ghost" onClick={()=>{setEi(item);setIForm({category:item.category,label:item.label,amount:String(item.amount),memo:item.memo||""});setIm(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCdi(item.id)}>삭제</Btn></div>
+                        </div>
+                      ))}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null;
+          })()}
+          {/* 비정기 섹션 */}
+          {(() => {
+            const irregCats = [...IRREGULAR_INCOME_CATS, ...IRREGULAR_EXPENSE_CATS];
+            const irregItems = irregCats.map(cat => ({ cat, items: curPlan.items.filter(i => i.category === cat.value) })).filter(x => x.items.length > 0);
+            const irregInc = curPlan.items.filter(i=>i.category==="irregular_income").reduce((s,i)=>s+i.amount,0);
+            const irregExp = curPlan.items.filter(i=>i.category==="irregular").reduce((s,i)=>s+i.amount,0);
+            return irregItems.length > 0 ? (
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-3 pb-2 border-b-2 border-orange-100">
+                  <span className="text-sm font-extrabold text-orange-600">⚡ 비정기</span>
+                  <div className="flex gap-3 text-xs">
+                    <span className="text-blue-400">수입 {fmtShort(irregInc)}</span>
+                    <span className="text-orange-400">지출 {fmtShort(irregExp)}</span>
+                  </div>
+                </div>
+                {irregItems.map(({cat, items}) => {
+                  const tot = items.reduce((s,i)=>s+i.amount,0);
+                  return (
+                    <div key={cat.value} className="mb-4">
+                      <div className="flex items-center justify-between mb-2"><div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full" style={{background:cat.color}}/><span className="text-xs font-bold text-gray-500 uppercase tracking-wide">{cat.label}</span></div><span className={`text-xs font-bold ${cat.isIncome?"text-blue-600":"text-orange-500"}`}>{fmt(tot)}</span></div>
+                      <div className="space-y-1">{items.map(item => (
+                        <div key={item.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-orange-50 hover:bg-orange-100 transition">
+                          <div><span className="text-sm text-gray-700">{item.label}</span>{item.memo&&<span className="text-xs text-gray-400 ml-2">{item.memo}</span>}</div>
+                          <div className="flex items-center gap-2"><span className="text-sm font-semibold text-gray-800">{fmt(item.amount)}</span><Btn size="sm" variant="ghost" onClick={()=>{setEi(item);setIForm({category:item.category,label:item.label,amount:String(item.amount),memo:item.memo||""});setIm(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCdi(item.id)}>삭제</Btn></div>
+                        </div>
+                      ))}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null;
+          })()}
           <div className="border-t border-gray-100 pt-3 space-y-1">
-            {[["총 수입 계획",planTotIncome,"text-blue-600"],["총 지출 계획",planTotExp,"text-red-500"]].map(([l,v,c])=><div key={l} className="flex justify-between"><span className="text-sm text-gray-500">{l}</span><span className={`text-sm font-bold ${c}`}>{fmt(v)}</span></div>)}
-            <div className="flex justify-between border-t border-gray-100 pt-1"><span className="text-sm font-bold text-gray-700">월 순저축</span><span className="text-sm font-bold text-green-600">{fmt(planTotIncome-planTotExp)}</span></div>
+            {[["정기 수입",curPlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0),"text-blue-600"],
+              ["정기 지출",curPlan.items.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+i.amount,0),"text-red-500"]
+            ].map(([l,v,c])=><div key={l} className="flex justify-between"><span className="text-sm text-gray-500">{l}</span><span className={`text-sm font-bold ${c}`}>{fmt(v)}</span></div>)}
+            <div className="flex justify-between border-t border-gray-100 pt-1"><span className="text-sm font-bold text-gray-700">월 정기 순저축</span><span className="text-sm font-bold text-green-600">{fmt(curPlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0)-curPlan.items.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+i.amount,0))}</span></div>
           </div>
         </Card> : <Card><div className="text-center py-8 text-gray-400"><p className="text-4xl mb-3">📋</p><p className="text-sm">버전을 먼저 생성해주세요</p></div></Card>}
       </div>}
@@ -722,6 +778,42 @@ const IncomeExpenseSection = ({ data, setData }) => {
               </div>
             );
           })}
+          {/* 비정기 구분선 */}
+          <div className="flex items-center gap-2 mt-4 mb-3 pb-2 border-b-2 border-orange-100"><span className="text-sm font-extrabold text-orange-600">⚡ 비정기</span></div>
+          {[...IRREGULAR_INCOME_CATS, ...IRREGULAR_EXPENSE_CATS].map((cat) => {
+            const items=activePlan.items.filter((i)=>i.category===cat.value);
+            const exts=extras.filter((r)=>r.category===cat.value);
+            if(!items.length&&!exts.length) return null;
+            const planTot=items.reduce((s,i)=>s+i.amount,0);
+            const actTot=items.reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)+exts.reduce((s,r)=>s+(Number(r.amount)||0),0);
+            const diff=actTot-planTot;
+            const isInc=!!cat.isIncome;
+            return (
+              <div key={cat.value} className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full" style={{background:cat.color}}/><span className="text-xs font-bold text-gray-500 uppercase">{cat.label}</span></div>
+                  <div className="flex items-center gap-2"><span className="text-xs text-gray-400">계획 {fmt(planTot)}</span><span className={`text-xs font-bold ${diff>0?(isInc?"text-green-600":"text-red-500"):diff<0?(isInc?"text-red-500":"text-green-600"):"text-gray-400"}`}>{diff>0?"+":""}{fmt(diff)}</span></div>
+                </div>
+                <div className="space-y-1">
+                  {items.map((item) => (
+                    <div key={item.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-50">
+                      <span className="text-sm text-gray-700 flex-1 min-w-0 truncate">{item.label}</span>
+                      <span className="text-xs text-gray-400 shrink-0 hidden sm:inline">계획 {fmt(item.amount)}</span>
+                      <input type="number" value={aEdits[item.id]??item.amount} onChange={(e)=>setAEdits((ed)=>({...ed,[item.id]:e.target.value}))} className="w-28 border border-orange-200 rounded-lg px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-orange-300/30 shrink-0"/>
+                    </div>
+                  ))}
+                  {exts.map((r) => (
+                    <div key={r.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-100">
+                      <input value={r.label} onChange={(e)=>setExtras((rows)=>rows.map((x)=>x.id===r.id?{...x,label:e.target.value}:x))} placeholder="항목명" className="flex-1 border border-orange-200 rounded-lg px-2 py-1 text-sm focus:outline-none bg-white min-w-0"/>
+                      <input type="number" value={r.amount} onChange={(e)=>setExtras((rows)=>rows.map((x)=>x.id===r.id?{...x,amount:e.target.value}:x))} className="w-28 border border-orange-200 rounded-lg px-2 py-1 text-sm text-right focus:outline-none bg-white shrink-0"/>
+                      <button onClick={()=>setExtras((rows)=>rows.filter((x)=>x.id!==r.id))} className="text-red-400 hover:text-red-600 shrink-0">✕</button>
+                    </div>
+                  ))}
+                  <button onClick={()=>setExtras((rows)=>[...rows,{id:genId(),category:cat.value,label:"",amount:""}])} className="text-xs text-orange-500 hover:text-orange-700 font-semibold mt-1 ml-3">+ 행 추가</button>
+                </div>
+              </div>
+            );
+          })}
           {(() => {
             const totIncPlan=activePlan.items.filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+i.amount,0);
             const totIncAct=activePlan.items.filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)+extras.filter((r)=>INCOME_CATEGORIES.find((c)=>c.value===r.category)).reduce((s,r)=>s+(Number(r.amount)||0),0);
@@ -754,7 +846,27 @@ const IncomeExpenseSection = ({ data, setData }) => {
               <div className="grid grid-cols-3 gap-3 mb-4">{[["정기수입",regInc,"text-blue-600"],["정기지출",regExp,"text-red-500"],["정기순저축",net,net>=0?"text-green-600":"text-red-500"]].map(([l,v,c])=><Card key={l} className="!p-4 text-center"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-sm font-bold ${c}`}>{fmtShort(v)}</p></Card>)}</div>
               {(irregInc>0||irregExp>0)&&<><p className="text-xs font-bold text-gray-500 mb-2">⚡ 비정기 수입/지출</p>
               <div className="grid grid-cols-3 gap-3 mb-4">{[["비정기수입",irregInc,"text-blue-400"],["비정기지출",irregExp,"text-orange-500"],["비정기순",irregInc-irregExp,(irregInc-irregExp)>=0?"text-green-500":"text-orange-500"]].map(([l,v,c])=><Card key={l} className="!p-4 text-center"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-sm font-bold ${c}`}>{fmtShort(v)}</p></Card>)}</div></>}
-              {monthCatPie.length>0&&<Card><SectionTitle>지출 카테고리 비중</SectionTitle><ResponsiveContainer width="100%" height={220}><PieChart><Pie data={monthCatPie} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={11}>{monthCatPie.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart></ResponsiveContainer></Card>}
+              {(() => {
+                const regCatPie = REGULAR_EXPENSE_CATS.map(cat => ({
+                  name: cat.label,
+                  value: allItems.filter(i=>i.category===cat.value).reduce((s,i)=>s+(i.actualAmount||0),0),
+                  color: cat.color
+                })).filter(d=>d.value>0);
+                return regCatPie.length>0 ? (
+                  <Card>
+                    <SectionTitle>📊 정기지출 비중</SectionTitle>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <PieChart>
+                        <Pie data={regCatPie} cx="50%" cy="50%" outerRadius={70} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={10}>
+                          {regCatPie.map((d,i)=><Cell key={i} fill={d.color}/>)}
+                        </Pie>
+                        <Tooltip formatter={(v)=>fmt(v)}/>
+                        <Legend wrapperStyle={{fontSize:10}} formatter={(value,entry)=>`${value} ${fmtShort(entry.payload.value)}`}/>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </Card>
+                ) : null;
+              })()}
               <Card><SectionTitle>계획 vs 실적</SectionTitle><div className="space-y-1">{a.items.map((item)=>{const diff=item.actualAmount-item.plannedAmount; const isInc=!!INCOME_CATEGORIES.find((c)=>c.value===item.category); return(<div key={item.planItemId} className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 text-xs"><span className="text-gray-700 flex-1">{item.label}</span><span className="text-gray-400 w-20 text-right">{fmtShort(item.plannedAmount)}</span><span className="font-bold w-20 text-right text-gray-800">{fmtShort(item.actualAmount)}</span><span className={`w-16 text-right font-bold ${diff>0?(isInc?"text-green-600":"text-red-500"):diff<0?(isInc?"text-red-500":"text-green-600"):"text-gray-400"}`}>{diff>0?"+":""}{fmtShort(diff)}</span></div>);})}
               {(a.extraItems||[]).map((item)=><div key={item.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-blue-50 text-xs"><span className="text-blue-700 flex-1">{item.label} <span className="text-blue-400">(추가)</span></span><span className="font-bold w-20 text-right text-blue-800">{fmtShort(item.actualAmount||item.amount)}</span></div>)}</div></Card>
             </>;
@@ -764,6 +876,30 @@ const IncomeExpenseSection = ({ data, setData }) => {
           <Card className="!p-4"><div className="flex items-center gap-3"><label className="text-sm font-semibold text-gray-600">연도:</label><select value={sumYear} onChange={(e)=>setSumYear(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none bg-white">{(years.length?years:[String(new Date().getFullYear())]).map((y)=><option key={y} value={y}>{y}년</option>)}</select></div></Card>
           <div className="grid grid-cols-3 gap-3">{[["연간 수입",yearData.income,"text-blue-600"],["연간 지출",yearData.expense,"text-red-500"],["연간 순저축",yearData.income-yearData.expense,(yearData.income-yearData.expense)>=0?"text-green-600":"text-red-500"]].map(([l,v,c])=><Card key={l} className="!p-4 text-center"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-sm font-bold ${c}`}>{fmtShort(v)}</p></Card>)}</div>
           {yearData.months.length>0&&<Card><SectionTitle>월별 수입/지출</SectionTitle><ResponsiveContainer width="100%" height={220}><BarChart data={yearData.months} margin={{top:5,right:5,bottom:5,left:0}}><CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/><XAxis dataKey="label" tick={{fontSize:11}}/><YAxis tickFormatter={(v)=>fmtShort(v)} tick={{fontSize:11}}/><Tooltip formatter={(v)=>fmt(v)}/><Legend wrapperStyle={{fontSize:11}}/><Bar dataKey="income" name="수입" fill="#4F86C6" radius={[4,4,0,0]}/><Bar dataKey="expense" name="지출" fill="#E85D75" radius={[4,4,0,0]}/></BarChart></ResponsiveContainer></Card>}
+          {(() => {
+            // 연간 지출 카테고리 합산 (비정기 포함)
+            const yearExpCatData = [...REGULAR_EXPENSE_CATS, ...IRREGULAR_EXPENSE_CATS].map(cat => {
+              const val = data.monthlyActuals.filter(a=>a.ym?.startsWith?.(sumYear)||a.yearMonth?.startsWith?.(sumYear))
+                .flatMap(a=>[...a.items,...(a.extraItems||[])])
+                .filter(i=>i.category===cat.value)
+                .reduce((s,i)=>s+(i.actualAmount||i.amount||0),0);
+              return { name: cat.label, value: val, color: cat.color };
+            }).filter(d=>d.value>0);
+            return yearExpCatData.length>0 ? (
+              <Card>
+                <SectionTitle>📊 연간 지출 비중 (비정기 포함)</SectionTitle>
+                <ResponsiveContainer width="100%" height={240}>
+                  <PieChart>
+                    <Pie data={yearExpCatData} cx="50%" cy="50%" outerRadius={75} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={10}>
+                      {yearExpCatData.map((d,i)=><Cell key={i} fill={d.color}/>)}
+                    </Pie>
+                    <Tooltip formatter={(v)=>fmt(v)}/>
+                    <Legend wrapperStyle={{fontSize:10}} formatter={(value,entry)=>`${value} ${fmtShort(entry.payload.value)}`}/>
+                  </PieChart>
+                </ResponsiveContainer>
+              </Card>
+            ) : null;
+          })()}
           {yearData.months.length>0&&<Card><SectionTitle>월별 순저축</SectionTitle><ResponsiveContainer width="100%" height={180}><LineChart data={yearData.months} margin={{top:5,right:5,bottom:5,left:0}}><CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/><XAxis dataKey="label" tick={{fontSize:11}}/><YAxis tickFormatter={(v)=>fmtShort(v)} tick={{fontSize:11}}/><Tooltip formatter={(v)=>fmt(v)}/><Line type="monotone" dataKey="net" name="순저축" stroke="#82C596" strokeWidth={2} dot={{fill:"#82C596"}}/></LineChart></ResponsiveContainer></Card>}
         </div>}
       </div>}
@@ -868,7 +1004,17 @@ const DashboardSection = ({ data }) => {
       </div>
       {assetPie.length>0&&<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Card><SectionTitle>부동산 vs 금융자산</SectionTitle><ResponsiveContainer width="100%" height={180}><PieChart><Pie data={assetPie} cx="50%" cy="50%" innerRadius={45} outerRadius={75} dataKey="value" label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={11}>{assetPie.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart></ResponsiveContainer></Card>
-        <Card><SectionTitle>금융자산 구성</SectionTitle><ResponsiveContainer width="100%" height={180}><PieChart><Pie data={finPie} cx="50%" cy="50%" innerRadius={45} outerRadius={75} dataKey="value" label={({name,percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={10}>{finPie.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart></ResponsiveContainer></Card>
+        <Card><SectionTitle>금융자산 구성</SectionTitle>
+          <ResponsiveContainer width="100%" height={180}>
+            <PieChart>
+              <Pie data={finPie} cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={10}>
+                {finPie.map((d,i)=><Cell key={i} fill={d.color}/>)}
+              </Pie>
+              <Tooltip formatter={(v)=>fmt(v)}/>
+              <Legend wrapperStyle={{fontSize:10}} formatter={(value, entry)=>`${value} ${fmtShort(entry.payload.value)}`}/>
+            </PieChart>
+          </ResponsiveContainer>
+        </Card>
       </div>}
       <Card><SectionTitle>💰 이달 수입/지출 ({ymLabel(thisYM)})</SectionTitle>
         {thisActual?<div className="grid grid-cols-3 gap-3 text-center">{[["수입",tInc,"text-blue-600"],["지출",tExp,"text-red-500"],["순저축",tInc-tExp,(tInc-tExp)>=0?"text-green-600":"text-red-500"]].map(([l,v,c])=><div key={l} className="p-3 rounded-xl bg-gray-50"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-base font-bold ${c}`}>{fmtShort(v)}</p></div>)}</div>
