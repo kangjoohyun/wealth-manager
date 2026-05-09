@@ -149,8 +149,8 @@ const SettingsSection = ({ data, setData }) => {
 
   // Claude Vision 파싱
   const [visionModal, setVisionModal] = useState(false);
-  const [visionImg, setVisionImg] = useState(null);    // base64
-  const [visionImgType, setVisionImgType] = useState("image/jpeg");
+  const [visionImgs, setVisionImgs] = useState([]);
+  const [visionProgress, setVisionProgress] = useState("");
   const [visionResult, setVisionResult] = useState(null);  // 파싱된 계좌 배열
   const [visionLoading, setVisionLoading] = useState(false);
   const [visionError, setVisionError] = useState("");
@@ -161,56 +161,58 @@ const SettingsSection = ({ data, setData }) => {
 
   // 이미지 → base64
   const handleImgUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setVisionImgType(file.type || "image/jpeg");
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const b64 = ev.target.result.split(",")[1];
-      setVisionImg(b64);
-      setVisionResult(null);
-      setVisionError("");
-    };
-    reader.readAsDataURL(file);
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setVisionResult(null);
+    setVisionError("");
+    Promise.all(files.map((file) => new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => resolve({ b64: ev.target.result.split(",")[1], type: file.type || "image/jpeg", name: file.name });
+      reader.readAsDataURL(file);
+    }))).then((imgs) => setVisionImgs((prev) => [...prev, ...imgs]));
   };
 
-  // Claude Vision API 호출
+  const parseOneImage = async (img) => {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1000,
+        messages: [{ role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: img.type, data: img.b64 } },
+          { type: "text", text: `이 이미지에서 계좌/금융상품 정보를 추출해줘. 반드시 JSON 배열만 반환하고 다른 텍스트는 절대 포함하지 마.\n형식: [{"bank":"은행명","accountNumber":"계좌번호(없으면 빈문자열)","description":"상품명/설명","balance":잔액숫자(없으면0),"category":"cash|domestic_stock|foreign_stock_etf|pension|fund|other"}]\ncategory 규칙: 예금/입출금→cash, 국내주식/ETF→domestic_stock, 해외주식/ETF→foreign_stock_etf, IRP/연금저축/연금→pension, 펀드→fund, 나머지→other` }
+        ]}]
+      })
+    });
+    const json = await res.json();
+    const text = json.content?.find((c) => c.type === "text")?.text || "";
+    const match = text.match(/\[[\s\S]*\]/);
+    if (!match) return [];
+    return JSON.parse(match[0]);
+  };
+
   const runVision = async () => {
-    if (!visionImg) return;
+    if (!visionImgs.length) return;
     setVisionLoading(true);
     setVisionError("");
     setVisionResult(null);
+    const allResults = [];
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          messages: [{
-            role: "user",
-            content: [
-              { type: "image", source: { type: "base64", media_type: visionImgType, data: visionImg } },
-              { type: "text", text: `이 이미지에서 계좌/금융상품 정보를 추출해줘. 반드시 JSON 배열만 반환하고 다른 텍스트는 절대 포함하지 마.
-형식: [{"bank":"은행명","accountNumber":"계좌번호(없으면 빈문자열)","description":"상품명/설명","balance":잔액숫자(없으면0),"category":"cash|domestic_stock|foreign_stock_etf|pension|fund|other"}]
-category 규칙: 예금/입출금→cash, 국내주식/ETF→domestic_stock, 해외주식/ETF→foreign_stock_etf, IRP/연금저축/연금→pension, 펀드→fund, 나머지→other` }
-            ]
-          }]
-        })
-      });
-      const json = await res.json();
-      const text = json.content?.find((c) => c.type === "text")?.text || "";
-      // JSON 배열 추출
-      const match = text.match(/\[[\s\S]*\]/);
-      if (!match) throw new Error("파싱 결과를 찾을 수 없습니다");
-      const parsed = JSON.parse(match[0]);
-      setVisionResult(parsed.map((p) => ({ ...p, selected: true })));
+      for (let i = 0; i < visionImgs.length; i++) {
+        setVisionProgress(`분석 중... (${i + 1}/${visionImgs.length})`);
+        const results = await parseOneImage(visionImgs[i]);
+        allResults.push(...results);
+      }
+      setVisionResult(allResults.map((p) => ({ ...p, selected: true })));
     } catch (e) {
       setVisionError("파싱 실패: " + e.message);
     } finally {
       setVisionLoading(false);
+      setVisionProgress("");
     }
   };
+
 
   // 선택된 항목을 계좌에 추가
   const applyVisionResult = () => {
