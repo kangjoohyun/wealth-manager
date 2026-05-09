@@ -1,0 +1,864 @@
+import { useState, useCallback, useMemo } from "react";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend, BarChart, Bar } from "recharts";
+
+// ─────────────────────────────────────────────
+// 상수 & 데이터 모델
+// ─────────────────────────────────────────────
+const DEFAULT_DATA = {
+  members: [
+    { id: "m1", name: "강주현", color: "#4F86C6" },
+    { id: "m2", name: "문채원", color: "#E8A87C" },
+    { id: "m3", name: "강하겸", color: "#82C596" },
+  ],
+  realEstate: [],
+  accounts: [],
+  loans: [],
+  incomeExpensePlans: [],
+  monthlyActuals: [],
+  balanceSheetSnapshots: [],
+  accountBook: [],
+};
+
+const ACCOUNT_CATEGORIES = [
+  { value: "cash", label: "현금/예금", color: "#4F86C6" },
+  { value: "domestic_stock", label: "국내주식", color: "#E85D75" },
+  { value: "foreign_stock_etf", label: "해외주식/ETF", color: "#9B6FD4" },
+  { value: "pension", label: "연금", color: "#E8A87C" },
+  { value: "fund", label: "펀드", color: "#82C596" },
+  { value: "other", label: "기타", color: "#A0A0A0" },
+];
+
+const INCOME_CATEGORIES = [
+  { value: "regular_income", label: "정기수입", color: "#4F86C6", isIncome: true },
+  { value: "irregular_income", label: "비정기수입", color: "#82C596", isIncome: true },
+];
+
+const EXPENSE_CATEGORIES = [
+  { value: "fixed", label: "고정지출", color: "#4F86C6" },
+  { value: "financial_cost", label: "금융비용", color: "#E85D75" },
+  { value: "savings", label: "저축", color: "#82C596" },
+  { value: "pension_exp", label: "연금", color: "#E8A87C" },
+  { value: "living", label: "생활비", color: "#9B6FD4" },
+  { value: "irregular", label: "비정기지출", color: "#F0C040" },
+];
+
+const ALL_PLAN_CATEGORIES = [...INCOME_CATEGORIES, ...EXPENSE_CATEGORIES];
+const MEMBER_COLORS = ["#4F86C6","#E8A87C","#82C596","#E85D75","#9B6FD4","#F0C040","#5BC8C0","#C87060"];
+
+// ─────────────────────────────────────────────
+// 스토리지
+// ─────────────────────────────────────────────
+const STORAGE_KEY = "wealth_manager_v2";
+const loadData = () => {
+  try { const r = localStorage.getItem(STORAGE_KEY); return r ? { ...DEFAULT_DATA, ...JSON.parse(r) } : DEFAULT_DATA; }
+  catch { return DEFAULT_DATA; }
+};
+const saveData = (d) => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} };
+const genId = () => Math.random().toString(36).slice(2, 10);
+
+// ─────────────────────────────────────────────
+// 유틸
+// ─────────────────────────────────────────────
+const fmt = (n) => n == null ? "-" : "₩" + Number(n).toLocaleString();
+const fmtShort = (n) => {
+  if (n == null) return "-";
+  const abs = Math.abs(n);
+  if (abs >= 1e8) return (n < 0 ? "-" : "") + (abs / 1e8).toFixed(1) + "억";
+  if (abs >= 1e4) return (n < 0 ? "-" : "") + Math.round(abs / 1e4) + "만";
+  return fmt(n);
+};
+const thisYearMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; };
+const ymLabel = (ym) => { const [y,m] = ym.split("-"); return `${y}.${m}`; };
+
+// ─────────────────────────────────────────────
+// 공통 UI
+// ─────────────────────────────────────────────
+const Card = ({ children, className = "" }) => (
+  <div className={`bg-white rounded-2xl shadow-sm border border-gray-100 p-5 ${className}`}>{children}</div>
+);
+const SectionTitle = ({ children }) => (
+  <h2 className="text-base font-bold text-gray-800 mb-4 flex items-center gap-2">{children}</h2>
+);
+const Badge = ({ color, label }) => (
+  <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: color + "22", color }}>{label}</span>
+);
+const Btn = ({ onClick, children, variant = "primary", size = "md", className = "", disabled = false }) => {
+  const base = "inline-flex items-center justify-center font-semibold rounded-xl transition-all duration-150 disabled:opacity-40 cursor-pointer";
+  const v = { primary: "bg-[#1a2744] text-white hover:bg-[#243563] active:scale-95", secondary: "bg-gray-100 text-gray-700 hover:bg-gray-200 active:scale-95", danger: "bg-red-50 text-red-600 hover:bg-red-100 active:scale-95", ghost: "text-gray-500 hover:bg-gray-100 active:scale-95", success: "bg-green-50 text-green-700 hover:bg-green-100 active:scale-95" };
+  const s = { sm: "px-3 py-1.5 text-xs", md: "px-4 py-2 text-sm", lg: "px-6 py-3 text-base" };
+  return <button onClick={onClick} disabled={disabled} className={`${base} ${v[variant]} ${s[size]} ${className}`}>{children}</button>;
+};
+const Inp = ({ label, value, onChange, type = "text", placeholder = "", required = false, className = "" }) => (
+  <div className={`flex flex-col gap-1 ${className}`}>
+    {label && <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{label}{required && <span className="text-red-400 ml-0.5">*</span>}</label>}
+    <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+      className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#1a2744]/30 focus:border-[#1a2744] transition" />
+  </div>
+);
+const Sel = ({ label, value, onChange, options, className = "" }) => (
+  <div className={`flex flex-col gap-1 ${className}`}>
+    {label && <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{label}</label>}
+    <select value={value} onChange={(e) => onChange(e.target.value)}
+      className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#1a2744]/30 bg-white transition">
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  </div>
+);
+const Modal = ({ open, onClose, title, children, wide = false }) => {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }}>
+      <div className={`bg-white rounded-2xl shadow-2xl w-full ${wide ? "max-w-2xl" : "max-w-md"} max-h-[90vh] overflow-y-auto`}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <span className="font-bold text-gray-800 text-base">{title}</span>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+        </div>
+        <div className="px-6 py-5">{children}</div>
+      </div>
+    </div>
+  );
+};
+const Confirm = ({ open, message, onConfirm, onCancel }) => (
+  <Modal open={open} onClose={onCancel} title="확인">
+    <p className="text-sm text-gray-700 mb-5">{message}</p>
+    <div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={onCancel}>취소</Btn><Btn variant="danger" onClick={onConfirm}>삭제</Btn></div>
+  </Modal>
+);
+
+// ─────────────────────────────────────────────
+// CSV 내보내기 유틸
+// ─────────────────────────────────────────────
+const toCSV = (rows) => {
+  return rows.map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+};
+const downloadCSV = (filename, rows) => {
+  const bom = "\uFEFF";
+  const b = new Blob([bom + toCSV(rows)], { type: "text/csv;charset=utf-8;" });
+  const u = URL.createObjectURL(b);
+  const a = document.createElement("a"); a.href = u; a.download = filename; a.click();
+};
+
+// ─────────────────────────────────────────────
+// 설정
+// ─────────────────────────────────────────────
+const SettingsSection = ({ data, setData }) => {
+  const [mm, setMm] = useState(false);
+  const [em, setEm] = useState(null);
+  const [form, setForm] = useState({ name: "", color: MEMBER_COLORS[0] });
+  const [cd, setCd] = useState(null);
+
+  // Claude Vision 파싱
+  const [visionModal, setVisionModal] = useState(false);
+  const [visionImg, setVisionImg] = useState(null);    // base64
+  const [visionImgType, setVisionImgType] = useState("image/jpeg");
+  const [visionResult, setVisionResult] = useState(null);  // 파싱된 계좌 배열
+  const [visionLoading, setVisionLoading] = useState(false);
+  const [visionError, setVisionError] = useState("");
+  const [visionMember, setVisionMember] = useState(data.members[0]?.id || "");
+
+  const open = (m) => { setEm(m||null); setForm(m ? { name: m.name, color: m.color } : { name: "", color: MEMBER_COLORS[0] }); setMm(true); };
+  const save = () => { if (!form.name.trim()) return; setData((d) => ({ ...d, members: em ? d.members.map((m) => m.id === em.id ? { ...m, ...form } : m) : [...d.members, { id: genId(), ...form }] })); setMm(false); };
+
+  // 이미지 → base64
+  const handleImgUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setVisionImgType(file.type || "image/jpeg");
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const b64 = ev.target.result.split(",")[1];
+      setVisionImg(b64);
+      setVisionResult(null);
+      setVisionError("");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Claude Vision API 호출
+  const runVision = async () => {
+    if (!visionImg) return;
+    setVisionLoading(true);
+    setVisionError("");
+    setVisionResult(null);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "image", source: { type: "base64", media_type: visionImgType, data: visionImg } },
+              { type: "text", text: `이 이미지에서 계좌/금융상품 정보를 추출해줘. 반드시 JSON 배열만 반환하고 다른 텍스트는 절대 포함하지 마.
+형식: [{"bank":"은행명","accountNumber":"계좌번호(없으면 빈문자열)","description":"상품명/설명","balance":잔액숫자(없으면0),"category":"cash|domestic_stock|foreign_stock_etf|pension|fund|other"}]
+category 규칙: 예금/입출금→cash, 국내주식/ETF→domestic_stock, 해외주식/ETF→foreign_stock_etf, IRP/연금저축/연금→pension, 펀드→fund, 나머지→other` }
+            ]
+          }]
+        })
+      });
+      const json = await res.json();
+      const text = json.content?.find((c) => c.type === "text")?.text || "";
+      // JSON 배열 추출
+      const match = text.match(/\[[\s\S]*\]/);
+      if (!match) throw new Error("파싱 결과를 찾을 수 없습니다");
+      const parsed = JSON.parse(match[0]);
+      setVisionResult(parsed.map((p) => ({ ...p, selected: true })));
+    } catch (e) {
+      setVisionError("파싱 실패: " + e.message);
+    } finally {
+      setVisionLoading(false);
+    }
+  };
+
+  // 선택된 항목을 계좌에 추가
+  const applyVisionResult = () => {
+    const toAdd = visionResult.filter((r) => r.selected).map((r) => ({
+      id: genId(),
+      memberId: visionMember,
+      bank: r.bank || "",
+      accountNumber: r.accountNumber || "",
+      description: r.description || "",
+      category: r.category || "cash",
+      balance: Number(r.balance) || 0,
+      monthlyDeposit: 0,
+      memo: "Vision 자동파싱",
+    }));
+    setData((d) => ({ ...d, accounts: [...d.accounts, ...toAdd] }));
+    setVisionModal(false);
+    setVisionImg(null);
+    setVisionResult(null);
+    alert(`${toAdd.length}개 계좌가 추가되었습니다!`);
+  };
+
+  // CSV 내보내기
+  const exportAccountsCSV = () => {
+    const getMemberName = (id) => data.members.find((m) => m.id === id)?.name || "-";
+    const getCatLabel = (v) => ACCOUNT_CATEGORIES.find((c) => c.value === v)?.label || v;
+    const rows = [
+      ["소유자", "은행/증권사", "계좌번호", "설명", "카테고리", "잔액", "월적립금", "메모"],
+      ...data.accounts.map((a) => [getMemberName(a.memberId), a.bank, a.accountNumber, a.description, getCatLabel(a.category), a.balance, a.monthlyDeposit, a.memo])
+    ];
+    downloadCSV(`계좌현황_${new Date().toISOString().slice(0,10)}.csv`, rows);
+  };
+
+  const exportSnapshotCSV = () => {
+    const sorted = [...data.balanceSheetSnapshots].sort((a,b) => a.yearMonth.localeCompare(b.yearMonth));
+    const rows = [
+      ["연월", "총자산", "부동산", "금융자산", "총부채", "순자산", "메모"],
+      ...sorted.map((s) => [s.yearMonth, s.totalAssets, s.realEstateAssets, s.financialAssets, s.totalLiabilities, s.netWorth, s.memo])
+    ];
+    downloadCSV(`재무상태표이력_${new Date().toISOString().slice(0,10)}.csv`, rows);
+  };
+
+  const exportActualsCSV = () => {
+    const rows = [["연월", "카테고리", "항목명", "계획금액", "실적금액", "비고"]];
+    data.monthlyActuals.sort((a,b)=>a.yearMonth.localeCompare(b.yearMonth)).forEach((a) => {
+      a.items.forEach((i) => rows.push([a.yearMonth, i.category, i.label, i.plannedAmount, i.actualAmount, "계획항목"]));
+      (a.extraItems||[]).forEach((i) => rows.push([a.yearMonth, i.category, i.label, "", i.actualAmount||i.amount, "추가항목"]));
+    });
+    downloadCSV(`수입지출실적_${new Date().toISOString().slice(0,10)}.csv`, rows);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* 구성원 */}
+      <Card>
+        <div className="flex items-center justify-between mb-4"><SectionTitle>👥 구성원 관리</SectionTitle><Btn size="sm" onClick={() => open(null)}>+ 추가</Btn></div>
+        <div className="space-y-2">{data.members.map((m) => (
+          <div key={m.id} className="flex items-center justify-between p-3 rounded-xl bg-gray-50">
+            <div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold" style={{ background: m.color }}>{m.name[0]}</div><span className="text-sm font-semibold text-gray-800">{m.name}</span></div>
+            <div className="flex gap-2"><Btn size="sm" variant="ghost" onClick={() => open(m)}>수정</Btn><Btn size="sm" variant="danger" onClick={() => setCd(m.id)}>삭제</Btn></div>
+          </div>
+        ))}</div>
+      </Card>
+
+      {/* Claude Vision 계좌 파싱 */}
+      <Card>
+        <SectionTitle>🤖 AI 계좌 자동 파싱</SectionTitle>
+        <p className="text-xs text-gray-500 mb-3">은행 앱 스크린샷을 업로드하면 Claude가 계좌 정보를 자동으로 추출합니다.</p>
+        <Btn size="sm" variant="secondary" onClick={() => { setVisionMember(data.members[0]?.id||""); setVisionImg(null); setVisionResult(null); setVisionError(""); setVisionModal(true); }}>
+          📸 스크린샷으로 계좌 추가
+        </Btn>
+      </Card>
+
+      {/* 데이터 관리 */}
+      <Card>
+        <SectionTitle>💾 데이터 관리</SectionTitle>
+        <div className="space-y-3">
+          {/* JSON */}
+          <div className="p-3 rounded-xl bg-blue-50 border border-blue-100">
+            <p className="text-xs font-semibold text-blue-700 mb-2">전체 백업 (JSON)</p>
+            <div className="flex gap-2 flex-wrap">
+              <Btn size="sm" variant="secondary" onClick={() => { const b=new Blob([JSON.stringify(data,null,2)],{type:"application/json"}); const u=URL.createObjectURL(b); const a=document.createElement("a"); a.href=u; a.download=`wealth_${new Date().toISOString().slice(0,10)}.json`; a.click(); }}>📤 JSON 내보내기</Btn>
+              <label className="cursor-pointer"><span className="inline-flex items-center px-3 py-1.5 text-xs font-semibold bg-white border border-blue-200 rounded-xl text-blue-700 hover:bg-blue-50 transition">📥 JSON 가져오기</span><input type="file" accept=".json" className="hidden" onChange={(e) => { const f=e.target.files?.[0]; if(!f) return; const r=new FileReader(); r.onload=(ev)=>{ try{setData({...DEFAULT_DATA,...JSON.parse(ev.target.result)}); alert("완료!");}catch{alert("파일 오류");} }; r.readAsText(f); }} /></label>
+            </div>
+          </div>
+          {/* CSV - Google Sheets용 */}
+          <div className="p-3 rounded-xl bg-green-50 border border-green-100">
+            <p className="text-xs font-semibold text-green-700 mb-1">CSV 내보내기 (Google Sheets용)</p>
+            <p className="text-xs text-green-500 mb-2">각 CSV를 Google Sheets에 시트별로 붙여넣기 하세요</p>
+            <div className="flex gap-2 flex-wrap">
+              <Btn size="sm" variant="secondary" onClick={exportAccountsCSV}>📊 계좌현황</Btn>
+              <Btn size="sm" variant="secondary" onClick={exportSnapshotCSV}>📋 재무상태표 이력</Btn>
+              <Btn size="sm" variant="secondary" onClick={exportActualsCSV}>💰 수입지출 실적</Btn>
+            </div>
+          </div>
+          {/* 초기화 */}
+          <div className="p-3 rounded-xl bg-red-50 border border-red-100">
+            <p className="text-xs font-semibold text-red-700 mb-2">데이터 초기화</p>
+            <Btn size="sm" variant="danger" onClick={() => { if(window.confirm("초기화하시겠습니까?")) setData(DEFAULT_DATA); }}>🗑 초기화</Btn>
+          </div>
+        </div>
+      </Card>
+
+      {/* 구성원 모달 */}
+      <Modal open={mm} onClose={() => setMm(false)} title={em ? "구성원 수정" : "구성원 추가"}>
+        <div className="space-y-4">
+          <Inp label="이름" value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))} required />
+          <div><label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-2">색상</label><div className="flex gap-2 flex-wrap">{MEMBER_COLORS.map((c) => <button key={c} onClick={() => setForm((f) => ({ ...f, color: c }))} className="w-8 h-8 rounded-full" style={{ background: c, outline: form.color===c ? `3px solid ${c}` : "none", outlineOffset: 2 }} />)}</div></div>
+          <div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={() => setMm(false)}>취소</Btn><Btn onClick={save}>저장</Btn></div>
+        </div>
+      </Modal>
+
+      {/* Vision 모달 */}
+      <Modal open={visionModal} onClose={() => setVisionModal(false)} title="📸 AI 계좌 파싱" wide>
+        <div className="space-y-4">
+          <Sel label="소유자" value={visionMember} onChange={setVisionMember} options={data.members.map((m) => ({ value: m.id, label: m.name }))} />
+
+          {/* 이미지 업로드 */}
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-2">스크린샷 업로드</label>
+            <label className="cursor-pointer flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl p-6 hover:border-[#1a2744] transition">
+              {visionImg ? (
+                <img src={`data:${visionImgType};base64,${visionImg}`} className="max-h-48 rounded-lg object-contain" alt="preview" />
+              ) : (
+                <div className="text-center">
+                  <div className="text-4xl mb-2">🖼</div>
+                  <p className="text-sm text-gray-500">이미지 클릭하여 업로드</p>
+                  <p className="text-xs text-gray-400 mt-1">PNG, JPG, JPEG 지원</p>
+                </div>
+              )}
+              <input type="file" accept="image/*" className="hidden" onChange={handleImgUpload} />
+            </label>
+          </div>
+
+          {visionImg && !visionResult && (
+            <Btn onClick={runVision} disabled={visionLoading} className="w-full">
+              {visionLoading ? "⏳ AI 분석 중..." : "🤖 AI로 계좌 정보 추출"}
+            </Btn>
+          )}
+
+          {visionError && <p className="text-xs text-red-500 p-3 bg-red-50 rounded-xl">{visionError}</p>}
+
+          {/* 파싱 결과 */}
+          {visionResult && (
+            <div className="space-y-3">
+              <p className="text-sm font-semibold text-gray-700">추출된 계좌 ({visionResult.filter((r)=>r.selected).length}개 선택됨)</p>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {visionResult.map((r, i) => (
+                  <div key={i} className={`p-3 rounded-xl border transition ${r.selected ? "border-[#1a2744] bg-blue-50" : "border-gray-100 bg-gray-50 opacity-60"}`}>
+                    <div className="flex items-start gap-2">
+                      <input type="checkbox" checked={r.selected} onChange={(e) => setVisionResult((prev) => prev.map((x,j) => j===i ? {...x,selected:e.target.checked} : x))} className="mt-1 cursor-pointer" />
+                      <div className="flex-1 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-bold text-gray-800">{r.bank}</span>
+                          {r.description && <span className="text-xs text-gray-500">{r.description}</span>}
+                          <Badge color={ACCOUNT_CATEGORIES.find((c)=>c.value===r.category)?.color||"#aaa"} label={ACCOUNT_CATEGORIES.find((c)=>c.value===r.category)?.label||r.category} />
+                        </div>
+                        {r.accountNumber && <p className="text-xs text-gray-400 font-mono">{r.accountNumber}</p>}
+                        <div className="flex gap-4 text-xs">
+                          <span className="text-gray-500">잔액: <span className="font-bold text-gray-700">{fmt(r.balance)}</span></span>
+                        </div>
+                        {/* 잔액 수정 */}
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-xs text-gray-400">잔액 수정:</span>
+                          <input type="number" value={r.balance} onChange={(e) => setVisionResult((prev) => prev.map((x,j) => j===i ? {...x,balance:Number(e.target.value)} : x))} className="w-32 border border-gray-200 rounded-lg px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#1a2744]/30" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Btn variant="secondary" onClick={() => { setVisionImg(null); setVisionResult(null); }}>다시 업로드</Btn>
+                <Btn onClick={applyVisionResult} disabled={!visionResult.some((r)=>r.selected)}>✅ 선택 항목 추가</Btn>
+              </div>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <Confirm open={!!cd} message="이 구성원을 삭제하시겠습니까?" onConfirm={() => { setData((d) => ({ ...d, members: d.members.filter((m) => m.id !== cd) })); setCd(null); }} onCancel={() => setCd(null)} />
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────
+// 자산현황
+// ─────────────────────────────────────────────
+const AssetsSection = ({ data, setData }) => {
+  const [tab, setTab] = useState("accounts");
+  const [am, setAm] = useState(false); const [ea, setEa] = useState(null); const [af, setAf] = useState({ memberId:"", bank:"", accountNumber:"", description:"", category:"cash", balance:"", monthlyDeposit:"", memo:"" }); const [cda, setCda] = useState(null);
+  const [rm, setRm] = useState(false); const [er, setEr] = useState(null); const [rf, setRf] = useState({ name:"", purchasePrice:"", currentPrice:"", loanId:"", memo:"" }); const [cdr, setCdr] = useState(null);
+  const [lm, setLm] = useState(false); const [el, setEl] = useState(null); const [lf, setLf] = useState({ memberId:"", name:"", balance:"", interestRate:"", monthlyPayment:"", dueDate:"", linkedRealEstateId:"", memo:"" }); const [cdl, setCdl] = useState(null);
+  const mn = (id) => data.members.find((m) => m.id === id)?.name || "-";
+  const mc = (id) => data.members.find((m) => m.id === id)?.color || "#aaa";
+  const cc = (v) => ACCOUNT_CATEGORIES.find((c) => c.value === v)?.color || "#aaa";
+  const oa = () => { setEa(null); setAf({ memberId: data.members[0]?.id||"", bank:"", accountNumber:"", description:"", category:"cash", balance:"", monthlyDeposit:"", memo:"" }); setAm(true); };
+  const sa = () => { if(!af.bank.trim()) return; setData((d) => ({ ...d, accounts: ea ? d.accounts.map((a) => a.id===ea.id ? {...a,...af,balance:Number(af.balance)||0,monthlyDeposit:Number(af.monthlyDeposit)||0} : a) : [...d.accounts, {id:genId(),...af,balance:Number(af.balance)||0,monthlyDeposit:Number(af.monthlyDeposit)||0}] })); setAm(false); };
+  const or = () => { setEr(null); setRf({ name:"", purchasePrice:"", currentPrice:"", loanId:"", memo:"" }); setRm(true); };
+  const sr = () => { if(!rf.name.trim()) return; setData((d) => ({ ...d, realEstate: er ? d.realEstate.map((r) => r.id===er.id ? {...r,...rf,purchasePrice:Number(rf.purchasePrice)||0,currentPrice:Number(rf.currentPrice)||0} : r) : [...d.realEstate, {id:genId(),...rf,purchasePrice:Number(rf.purchasePrice)||0,currentPrice:Number(rf.currentPrice)||0}] })); setRm(false); };
+  const ol = () => { setEl(null); setLf({ memberId: data.members[0]?.id||"", name:"", balance:"", interestRate:"", monthlyPayment:"", dueDate:"", linkedRealEstateId:"", memo:"" }); setLm(true); };
+  const sl = () => { if(!lf.name.trim()) return; setData((d) => ({ ...d, loans: el ? d.loans.map((l) => l.id===el.id ? {...l,...lf,balance:Number(lf.balance)||0,interestRate:Number(lf.interestRate)||0,monthlyPayment:Number(lf.monthlyPayment)||0} : l) : [...d.loans, {id:genId(),...lf,balance:Number(lf.balance)||0,interestRate:Number(lf.interestRate)||0,monthlyPayment:Number(lf.monthlyPayment)||0}] })); setLm(false); };
+  const totB = data.accounts.reduce((s,a)=>s+(a.balance||0),0);
+  const totR = data.realEstate.reduce((s,r)=>s+(r.currentPrice||0),0);
+  const totL = data.loans.reduce((s,l)=>s+(l.balance||0),0);
+  const totM = data.accounts.reduce((s,a)=>s+(a.monthlyDeposit||0),0);
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[["금융자산",totB,"#4F86C6"],["부동산자산",totR,"#82C596"],["총부채",totL,"#E85D75"],["월 총 적립금",totM,"#E8A87C"]].map(([l,v,c]) => <Card key={l} className="!p-4"><p className="text-xs text-gray-500 mb-1">{l}</p><p className="text-base font-bold" style={{color:c}}>{fmt(v)}</p></Card>)}
+      </div>
+      <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
+        {[["accounts","금융계좌"],["realestate","부동산"],["loans","대출/부채"]].map(([k,l]) => <button key={k} onClick={()=>setTab(k)} className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${tab===k?"bg-white text-[#1a2744] shadow-sm":"text-gray-500"}`}>{l}</button>)}
+      </div>
+      {tab==="accounts" && <Card>
+        <div className="flex items-center justify-between mb-4"><SectionTitle>🏦 금융계좌</SectionTitle><Btn size="sm" onClick={oa}>+ 계좌 추가</Btn></div>
+        {ACCOUNT_CATEGORIES.map((cat) => { const cats=data.accounts.filter((a)=>a.category===cat.value); if(!cats.length) return null; return (
+          <div key={cat.value} className="mb-5">
+            <div className="flex items-center gap-2 mb-2"><div className="w-2 h-2 rounded-full" style={{background:cat.color}}/><span className="text-xs font-bold text-gray-500 uppercase tracking-wide">{cat.label}</span><span className="text-xs text-gray-400">({fmt(cats.reduce((s,a)=>s+a.balance,0))})</span></div>
+            <div className="space-y-2">{cats.map((acc) => (
+              <div key={acc.id} className="flex items-center justify-between p-3 rounded-xl bg-gray-50 hover:bg-gray-100 transition">
+                <div className="flex-1 min-w-0"><div className="flex items-center gap-2 flex-wrap"><span className="text-sm font-semibold text-gray-800">{acc.bank}</span>{acc.description&&<span className="text-xs text-gray-500">{acc.description}</span>}<Badge color={mc(acc.memberId)} label={mn(acc.memberId)} />{acc.monthlyDeposit>0&&<Badge color="#E8A87C" label={`적립 ${fmt(acc.monthlyDeposit)}/월`}/>}</div>{acc.accountNumber&&<p className="text-xs text-gray-400 mt-0.5">{acc.accountNumber}</p>}</div>
+                <div className="flex items-center gap-2 ml-2 shrink-0"><span className="text-sm font-bold text-gray-800">{fmt(acc.balance)}</span><Btn size="sm" variant="ghost" onClick={()=>{setEa(acc);setAf({...acc,balance:acc.balance??"",monthlyDeposit:acc.monthlyDeposit??""});setAm(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCda(acc.id)}>삭제</Btn></div>
+              </div>
+            ))}</div>
+          </div>
+        );})}
+        {!data.accounts.length&&<p className="text-sm text-gray-400 text-center py-6">등록된 계좌가 없습니다</p>}
+        {totM>0&&<div className="mt-4 p-3 rounded-xl bg-amber-50 border border-amber-100 flex justify-between"><span className="text-xs font-semibold text-amber-700">💰 월 총 적립금</span><span className="text-sm font-bold text-amber-700">{fmt(totM)}</span></div>}
+      </Card>}
+      {tab==="realestate" && <Card>
+        <div className="flex items-center justify-between mb-4"><SectionTitle>🏠 부동산</SectionTitle><Btn size="sm" onClick={or}>+ 추가</Btn></div>
+        <div className="space-y-3">{data.realEstate.map((re) => { const linked=data.loans.find((l)=>l.id===re.loanId); const gain=re.currentPrice-re.purchasePrice; return (
+          <div key={re.id} className="p-4 rounded-xl bg-gray-50">
+            <div className="flex items-center justify-between"><div><p className="text-sm font-bold text-gray-800">{re.name}</p>{re.memo&&<p className="text-xs text-gray-400">{re.memo}</p>}</div><div className="flex gap-2"><Btn size="sm" variant="ghost" onClick={()=>{setEr(re);setRf({...re});setRm(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCdr(re.id)}>삭제</Btn></div></div>
+            <div className="grid grid-cols-3 gap-2 mt-3 text-center">{[["취득가",fmt(re.purchasePrice),""],["현재가",fmt(re.currentPrice),""],["평가손익",(gain>=0?"+":"")+fmt(gain),gain>=0?"text-green-600":"text-red-500"]].map(([l,v,c])=><div key={l} className="bg-white rounded-lg p-2"><p className="text-xs text-gray-400">{l}</p><p className={`text-xs font-bold ${c||"text-gray-700"}`}>{v}</p></div>)}</div>
+            {linked&&<p className="text-xs text-blue-500 mt-2">🔗 연결대출: {linked.name} ({fmt(linked.balance)})</p>}
+          </div>
+        );})}{!data.realEstate.length&&<p className="text-sm text-gray-400 text-center py-6">등록된 부동산이 없습니다</p>}</div>
+      </Card>}
+      {tab==="loans" && <Card>
+        <div className="flex items-center justify-between mb-4"><SectionTitle>💳 대출/부채</SectionTitle><Btn size="sm" onClick={ol}>+ 추가</Btn></div>
+        <div className="space-y-3">{data.loans.map((loan) => (
+          <div key={loan.id} className="p-4 rounded-xl bg-red-50">
+            <div className="flex items-center justify-between"><div><div className="flex items-center gap-2"><p className="text-sm font-bold text-gray-800">{loan.name}</p><Badge color={mc(loan.memberId)} label={mn(loan.memberId)}/></div>{loan.memo&&<p className="text-xs text-gray-400">{loan.memo}</p>}</div><div className="flex gap-2"><Btn size="sm" variant="ghost" onClick={()=>{setEl(loan);setLf({...loan});setLm(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCdl(loan.id)}>삭제</Btn></div></div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-center">{[["잔액",fmt(loan.balance),"text-red-600"],["금리",loan.interestRate+"%",""],["월상환",fmt(loan.monthlyPayment),""],["만기",loan.dueDate||"-",""]].map(([l,v,c])=><div key={l} className="bg-white rounded-lg p-2"><p className="text-xs text-gray-400">{l}</p><p className={`text-xs font-bold ${c||"text-gray-700"}`}>{v}</p></div>)}</div>
+          </div>
+        ))}{!data.loans.length&&<p className="text-sm text-gray-400 text-center py-6">등록된 대출이 없습니다</p>}</div>
+      </Card>}
+      <Modal open={am} onClose={()=>setAm(false)} title={ea?"계좌 수정":"계좌 추가"}><div className="space-y-3"><Sel label="소유자" value={af.memberId} onChange={(v)=>setAf((f)=>({...f,memberId:v}))} options={data.members.map((m)=>({value:m.id,label:m.name}))}/><Sel label="카테고리" value={af.category} onChange={(v)=>setAf((f)=>({...f,category:v}))} options={ACCOUNT_CATEGORIES}/><Inp label="은행/증권사" value={af.bank} onChange={(v)=>setAf((f)=>({...f,bank:v}))} required/><Inp label="계좌번호" value={af.accountNumber} onChange={(v)=>setAf((f)=>({...f,accountNumber:v}))}/><Inp label="설명" value={af.description} onChange={(v)=>setAf((f)=>({...f,description:v}))}/><Inp label="현재 잔액 (원)" type="number" value={af.balance} onChange={(v)=>setAf((f)=>({...f,balance:v}))}/><Inp label="월 적립금 (원)" type="number" value={af.monthlyDeposit} onChange={(v)=>setAf((f)=>({...f,monthlyDeposit:v}))}/><Inp label="메모" value={af.memo} onChange={(v)=>setAf((f)=>({...f,memo:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setAm(false)}>취소</Btn><Btn onClick={sa}>저장</Btn></div></div></Modal>
+      <Modal open={rm} onClose={()=>setRm(false)} title={er?"부동산 수정":"부동산 추가"}><div className="space-y-3"><Inp label="물건명" value={rf.name} onChange={(v)=>setRf((f)=>({...f,name:v}))} required/><Inp label="취득가 (원)" type="number" value={rf.purchasePrice} onChange={(v)=>setRf((f)=>({...f,purchasePrice:v}))}/><Inp label="현재 시세 (원)" type="number" value={rf.currentPrice} onChange={(v)=>setRf((f)=>({...f,currentPrice:v}))}/><Sel label="연결 대출" value={rf.loanId} onChange={(v)=>setRf((f)=>({...f,loanId:v}))} options={[{value:"",label:"없음"},...data.loans.map((l)=>({value:l.id,label:l.name}))]}/><Inp label="메모" value={rf.memo} onChange={(v)=>setRf((f)=>({...f,memo:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setRm(false)}>취소</Btn><Btn onClick={sr}>저장</Btn></div></div></Modal>
+      <Modal open={lm} onClose={()=>setLm(false)} title={el?"대출 수정":"대출 추가"}><div className="space-y-3"><Sel label="소유자" value={lf.memberId} onChange={(v)=>setLf((f)=>({...f,memberId:v}))} options={data.members.map((m)=>({value:m.id,label:m.name}))}/><Inp label="대출명" value={lf.name} onChange={(v)=>setLf((f)=>({...f,name:v}))} required/><Inp label="잔액 (원)" type="number" value={lf.balance} onChange={(v)=>setLf((f)=>({...f,balance:v}))}/><Inp label="금리 (%)" type="number" value={lf.interestRate} onChange={(v)=>setLf((f)=>({...f,interestRate:v}))}/><Inp label="월 상환액 (원)" type="number" value={lf.monthlyPayment} onChange={(v)=>setLf((f)=>({...f,monthlyPayment:v}))}/><Inp label="만기일" type="date" value={lf.dueDate} onChange={(v)=>setLf((f)=>({...f,dueDate:v}))}/><Sel label="연결 부동산" value={lf.linkedRealEstateId} onChange={(v)=>setLf((f)=>({...f,linkedRealEstateId:v}))} options={[{value:"",label:"없음"},...data.realEstate.map((r)=>({value:r.id,label:r.name}))]}/><Inp label="메모" value={lf.memo} onChange={(v)=>setLf((f)=>({...f,memo:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setLm(false)}>취소</Btn><Btn onClick={sl}>저장</Btn></div></div></Modal>
+      <Confirm open={!!cda} message="이 계좌를 삭제하시겠습니까?" onConfirm={()=>{setData((d)=>({...d,accounts:d.accounts.filter((a)=>a.id!==cda)}));setCda(null);}} onCancel={()=>setCda(null)}/>
+      <Confirm open={!!cdr} message="이 부동산을 삭제하시겠습니까?" onConfirm={()=>{setData((d)=>({...d,realEstate:d.realEstate.filter((r)=>r.id!==cdr)}));setCdr(null);}} onCancel={()=>setCdr(null)}/>
+      <Confirm open={!!cdl} message="이 대출을 삭제하시겠습니까?" onConfirm={()=>{setData((d)=>({...d,loans:d.loans.filter((l)=>l.id!==cdl)}));setCdl(null);}} onCancel={()=>setCdl(null)}/>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────
+// 수입/지출
+// ─────────────────────────────────────────────
+const IncomeExpenseSection = ({ data, setData }) => {
+  const [tab, setTab] = useState("plan");
+  const [selVer, setSelVer] = useState(null);
+  const [im, setIm] = useState(false); const [ei, setEi] = useState(null); const [iForm, setIForm] = useState({ category:"regular_income", label:"", amount:"", memo:"" });
+  const [vm, setVm] = useState(false); const [vForm, setVForm] = useState({ label:"", startDate:"" });
+  const [aYM, setAYM] = useState(thisYearMonth()); const [aEdits, setAEdits] = useState({}); const [extras, setExtras] = useState([]);
+  const [sumTab, setSumTab] = useState("monthly"); const [sumYM, setSumYM] = useState(thisYearMonth()); const [sumYear, setSumYear] = useState(String(new Date().getFullYear()));
+  const [cdi, setCdi] = useState(null); const [cdv, setCdv] = useState(null);
+
+  const activePlan = data.incomeExpensePlans.find((p) => p.isActive) || data.incomeExpensePlans.slice(-1)[0];
+  const curPlan = selVer ? data.incomeExpensePlans.find((p) => p.id === selVer) : activePlan;
+
+  const createVer = () => {
+    if (!vForm.label || !vForm.startDate) return;
+    const base = activePlan ? activePlan.items.map((i) => ({ ...i, id: genId() })) : [];
+    const np = { id: genId(), label: vForm.label, startDate: vForm.startDate, isActive: true, items: base };
+    setData((d) => ({ ...d, incomeExpensePlans: [...d.incomeExpensePlans.map((p) => ({ ...p, isActive: false })), np] }));
+    setSelVer(np.id); setVm(false); setVForm({ label:"", startDate:"" });
+  };
+
+  const saveItem = () => {
+    if (!iForm.label.trim() || !curPlan) return;
+    const ni = { id: ei?.id || genId(), ...iForm, amount: Number(iForm.amount)||0 };
+    setData((d) => ({ ...d, incomeExpensePlans: d.incomeExpensePlans.map((p) => p.id===curPlan.id ? {...p, items: ei ? p.items.map((i)=>i.id===ei.id?ni:i) : [...p.items,ni]} : p) }));
+    setIm(false);
+  };
+
+  const initActual = (ym) => {
+    const ex = data.monthlyActuals.find((a) => a.yearMonth === ym);
+    if (ex) { const eds={}; ex.items.forEach((i)=>{eds[i.planItemId]=i.actualAmount;}); setAEdits(eds); setExtras(ex.extraItems||[]); }
+    else if (activePlan) { const eds={}; activePlan.items.forEach((i)=>{eds[i.id]=i.amount;}); setAEdits(eds); setExtras([]); }
+    else { setAEdits({}); setExtras([]); }
+  };
+
+  const saveActual = () => {
+    if (!activePlan) return;
+    const items = activePlan.items.map((i) => ({ planItemId:i.id, label:i.label, category:i.category, plannedAmount:i.amount, actualAmount:Number(aEdits[i.id])||0 }));
+    const ex = data.monthlyActuals.find((a) => a.yearMonth === aYM);
+    const na = { id:ex?.id||genId(), yearMonth:aYM, planVersionId:activePlan.id, items, extraItems:extras };
+    setData((d) => ({ ...d, monthlyActuals: ex ? d.monthlyActuals.map((a)=>a.yearMonth===aYM?na:a) : [...d.monthlyActuals,na] }));
+    alert("저장되었습니다!");
+  };
+
+  const monthlyData = useMemo(() => data.monthlyActuals.sort((a,b)=>a.yearMonth.localeCompare(b.yearMonth)).map((a) => {
+    const inc = (items) => items.filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||i.amount||0),0);
+    const exp = (items) => items.filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||i.amount||0),0);
+    const income = inc(a.items) + inc(a.extraItems||[]);
+    const expense = exp(a.items) + exp(a.extraItems||[]);
+    return { ym:a.yearMonth, label:ymLabel(a.yearMonth), income, expense, net:income-expense };
+  }), [data.monthlyActuals]);
+
+  const yearData = useMemo(() => { const f=monthlyData.filter((d)=>d.ym.startsWith(sumYear)); return { income:f.reduce((s,d)=>s+d.income,0), expense:f.reduce((s,d)=>s+d.expense,0), months:f }; }, [monthlyData,sumYear]);
+
+  const monthCatPie = useMemo(() => {
+    const a = data.monthlyActuals.find((x)=>x.yearMonth===sumYM); if(!a) return [];
+    const sums={}; [...a.items,...(a.extraItems||[])].filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).forEach((i)=>{sums[i.category]=(sums[i.category]||0)+(i.actualAmount||0);});
+    return EXPENSE_CATEGORIES.filter((c)=>sums[c.value]>0).map((c)=>({name:c.label,value:sums[c.value],color:c.color}));
+  }, [data.monthlyActuals,sumYM]);
+
+  const years = [...new Set(data.monthlyActuals.map((a)=>a.yearMonth.slice(0,4)))].sort();
+  const curActual = data.monthlyActuals.find((a)=>a.yearMonth===aYM);
+
+  const planTotIncome = curPlan?.items.filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+i.amount,0)||0;
+  const planTotExp = curPlan?.items.filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+i.amount,0)||0;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
+        {[["plan","📋 계획"],["actual","✏️ 실적 입력"],["summary","📊 Summary"]].map(([k,l]) => (
+          <button key={k} onClick={()=>{setTab(k);if(k==="actual")initActual(aYM);}} className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${tab===k?"bg-white text-[#1a2744] shadow-sm":"text-gray-500"}`}>{l}</button>
+        ))}
+      </div>
+
+      {tab==="plan" && <div className="space-y-4">
+        <Card className="!p-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-semibold text-gray-600">버전:</span>
+              {data.incomeExpensePlans.map((p) => <button key={p.id} onClick={()=>setSelVer(p.id)} className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${(selVer||activePlan?.id)===p.id?"bg-[#1a2744] text-white":"bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>{p.label}{p.isActive?" ✓":""}</button>)}
+              {!data.incomeExpensePlans.length&&<span className="text-xs text-gray-400">버전이 없습니다</span>}
+            </div>
+            <div className="flex gap-2">
+              {curPlan&&!curPlan.isActive&&<Btn size="sm" variant="success" onClick={()=>setData((d)=>({...d,incomeExpensePlans:d.incomeExpensePlans.map((p)=>({...p,isActive:p.id===curPlan.id}))}))}>활성화</Btn>}
+              <Btn size="sm" onClick={()=>setVm(true)}>+ 새 버전</Btn>
+              {curPlan&&<Btn size="sm" variant="danger" onClick={()=>setCdv(curPlan.id)}>삭제</Btn>}
+            </div>
+          </div>
+          {curPlan&&<p className="text-xs text-gray-400 mt-2">적용시작: {curPlan.startDate}</p>}
+        </Card>
+        {curPlan ? <Card>
+          <div className="flex items-center justify-between mb-4"><SectionTitle>💡 {curPlan.label} {curPlan.isActive&&<Badge color="#4F86C6" label="활성"/>}</SectionTitle><Btn size="sm" onClick={()=>{setEi(null);setIForm({category:"regular_income",label:"",amount:"",memo:""});setIm(true);}}>+ 항목 추가</Btn></div>
+          {ALL_PLAN_CATEGORIES.map((cat) => { const items=curPlan.items.filter((i)=>i.category===cat.value); if(!items.length) return null; const tot=items.reduce((s,i)=>s+i.amount,0); return (
+            <div key={cat.value} className="mb-5">
+              <div className="flex items-center justify-between mb-2"><div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full" style={{background:cat.color}}/><span className="text-xs font-bold text-gray-500 uppercase tracking-wide">{cat.label}</span></div><span className={`text-xs font-bold ${cat.isIncome?"text-blue-600":"text-gray-600"}`}>{fmt(tot)}</span></div>
+              <div className="space-y-1">{items.map((item) => (
+                <div key={item.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition">
+                  <div><span className="text-sm text-gray-700">{item.label}</span>{item.memo&&<span className="text-xs text-gray-400 ml-2">{item.memo}</span>}</div>
+                  <div className="flex items-center gap-2"><span className="text-sm font-semibold text-gray-800">{fmt(item.amount)}</span><Btn size="sm" variant="ghost" onClick={()=>{setEi(item);setIForm({category:item.category,label:item.label,amount:String(item.amount),memo:item.memo||""});setIm(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCdi(item.id)}>삭제</Btn></div>
+                </div>
+              ))}</div>
+            </div>
+          );})}
+          <div className="border-t border-gray-100 pt-3 space-y-1">
+            {[["총 수입 계획",planTotIncome,"text-blue-600"],["총 지출 계획",planTotExp,"text-red-500"]].map(([l,v,c])=><div key={l} className="flex justify-between"><span className="text-sm text-gray-500">{l}</span><span className={`text-sm font-bold ${c}`}>{fmt(v)}</span></div>)}
+            <div className="flex justify-between border-t border-gray-100 pt-1"><span className="text-sm font-bold text-gray-700">월 순저축</span><span className="text-sm font-bold text-green-600">{fmt(planTotIncome-planTotExp)}</span></div>
+          </div>
+        </Card> : <Card><div className="text-center py-8 text-gray-400"><p className="text-4xl mb-3">📋</p><p className="text-sm">버전을 먼저 생성해주세요</p></div></Card>}
+      </div>}
+
+      {tab==="actual" && <div className="space-y-4">
+        <Card className="!p-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="text-sm font-semibold text-gray-600">월 선택:</label>
+            <input type="month" value={aYM} onChange={(e)=>{setAYM(e.target.value);initActual(e.target.value);}} className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2744]/30"/>
+            {curActual&&<Badge color="#82C596" label="저장된 실적 있음"/>}
+            <Btn size="sm" variant="success" onClick={saveActual} disabled={!activePlan}>💾 저장</Btn>
+          </div>
+        </Card>
+        {activePlan ? <Card>
+          <SectionTitle>✏️ {ymLabel(aYM)} 실적 입력</SectionTitle>
+          {ALL_PLAN_CATEGORIES.map((cat) => {
+            const items=activePlan.items.filter((i)=>i.category===cat.value);
+            const exts=extras.filter((r)=>r.category===cat.value);
+            if(!items.length&&!exts.length) return null;
+            const planTot=items.reduce((s,i)=>s+i.amount,0);
+            const actTot=items.reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)+exts.reduce((s,r)=>s+(Number(r.amount)||0),0);
+            const diff=actTot-planTot;
+            const isInc=!!cat.isIncome;
+            return (
+              <div key={cat.value} className="mb-5">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full" style={{background:cat.color}}/><span className="text-xs font-bold text-gray-500 uppercase">{cat.label}</span></div>
+                  <div className="flex items-center gap-2"><span className="text-xs text-gray-400">계획 {fmt(planTot)}</span><span className={`text-xs font-bold ${diff>0?(isInc?"text-green-600":"text-red-500"):diff<0?(isInc?"text-red-500":"text-green-600"):"text-gray-400"}`}>{diff>0?"+":""}{fmt(diff)}</span></div>
+                </div>
+                <div className="space-y-1">
+                  {items.map((item) => (
+                    <div key={item.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50">
+                      <span className="text-sm text-gray-700 flex-1 min-w-0 truncate">{item.label}</span>
+                      <span className="text-xs text-gray-400 shrink-0 hidden sm:inline">계획 {fmt(item.amount)}</span>
+                      <input type="number" value={aEdits[item.id]??item.amount} onChange={(e)=>setAEdits((ed)=>({...ed,[item.id]:e.target.value}))} className="w-28 border border-gray-200 rounded-lg px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-[#1a2744]/30 shrink-0"/>
+                    </div>
+                  ))}
+                  {exts.map((r) => (
+                    <div key={r.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50">
+                      <input value={r.label} onChange={(e)=>setExtras((rows)=>rows.map((x)=>x.id===r.id?{...x,label:e.target.value}:x))} placeholder="항목명" className="flex-1 border border-blue-200 rounded-lg px-2 py-1 text-sm focus:outline-none bg-white min-w-0"/>
+                      <input type="number" value={r.amount} onChange={(e)=>setExtras((rows)=>rows.map((x)=>x.id===r.id?{...x,amount:e.target.value}:x))} className="w-28 border border-blue-200 rounded-lg px-2 py-1 text-sm text-right focus:outline-none bg-white shrink-0"/>
+                      <button onClick={()=>setExtras((rows)=>rows.filter((x)=>x.id!==r.id))} className="text-red-400 hover:text-red-600 shrink-0">✕</button>
+                    </div>
+                  ))}
+                  <button onClick={()=>setExtras((rows)=>[...rows,{id:genId(),category:cat.value,label:"",amount:""}])} className="text-xs text-blue-500 hover:text-blue-700 font-semibold mt-1 ml-3">+ 행 추가</button>
+                </div>
+              </div>
+            );
+          })}
+          {(() => {
+            const totIncPlan=activePlan.items.filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+i.amount,0);
+            const totIncAct=activePlan.items.filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)+extras.filter((r)=>INCOME_CATEGORIES.find((c)=>c.value===r.category)).reduce((s,r)=>s+(Number(r.amount)||0),0);
+            const totExpPlan=activePlan.items.filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+i.amount,0);
+            const totExpAct=activePlan.items.filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)+extras.filter((r)=>EXPENSE_CATEGORIES.find((c)=>c.value===r.category)).reduce((s,r)=>s+(Number(r.amount)||0),0);
+            return <div className="border-t border-gray-100 pt-3 space-y-1">
+              {[["수입 실적",totIncAct,"text-blue-600",`계획 ${fmt(totIncPlan)}`],["지출 실적",totExpAct,"text-red-500",`계획 ${fmt(totExpPlan)}`],["순저축",totIncAct-totExpAct,"text-green-600",""]].map(([l,v,c,sub])=>(
+                <div key={l} className="flex justify-between items-center"><div><span className="text-sm font-semibold text-gray-700">{l}</span>{sub&&<span className="text-xs text-gray-400 ml-2">{sub}</span>}</div><span className={`text-sm font-bold ${c}`}>{fmt(v)}</span></div>
+              ))}
+            </div>;
+          })()}
+        </Card> : <Card><div className="text-center py-8 text-gray-400 text-sm">활성 계획 버전이 없습니다</div></Card>}
+      </div>}
+
+      {tab==="summary" && <div className="space-y-4">
+        <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
+          {[["monthly","월간"],["yearly","연간"]].map(([k,l])=><button key={k} onClick={()=>setSumTab(k)} className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${sumTab===k?"bg-white text-[#1a2744] shadow-sm":"text-gray-500"}`}>{l}</button>)}
+        </div>
+        {sumTab==="monthly" && <div className="space-y-4">
+          <Card className="!p-4"><div className="flex items-center gap-3"><label className="text-sm font-semibold text-gray-600">월 선택:</label><input type="month" value={sumYM} onChange={(e)=>setSumYM(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2744]/30"/></div></Card>
+          {(() => { const a=data.monthlyActuals.find((x)=>x.yearMonth===sumYM); if(!a) return <Card><div className="text-center py-8 text-gray-400 text-sm">해당 월 실적이 없습니다</div></Card>;
+            const inc=a.items.filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0)+(a.extraItems||[]).filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0);
+            const exp=a.items.filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0)+(a.extraItems||[]).filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0);
+            const net=inc-exp;
+            return <>
+              <div className="grid grid-cols-3 gap-3">{[["수입",inc,"text-blue-600"],["지출",exp,"text-red-500"],["순저축",net,net>=0?"text-green-600":"text-red-500"]].map(([l,v,c])=><Card key={l} className="!p-4 text-center"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-sm font-bold ${c}`}>{fmtShort(v)}</p></Card>)}</div>
+              {monthCatPie.length>0&&<Card><SectionTitle>지출 카테고리 비중</SectionTitle><ResponsiveContainer width="100%" height={220}><PieChart><Pie data={monthCatPie} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={11}>{monthCatPie.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart></ResponsiveContainer></Card>}
+              <Card><SectionTitle>계획 vs 실적</SectionTitle><div className="space-y-1">{a.items.map((item)=>{const diff=item.actualAmount-item.plannedAmount; const isInc=!!INCOME_CATEGORIES.find((c)=>c.value===item.category); return(<div key={item.planItemId} className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 text-xs"><span className="text-gray-700 flex-1">{item.label}</span><span className="text-gray-400 w-20 text-right">{fmtShort(item.plannedAmount)}</span><span className="font-bold w-20 text-right text-gray-800">{fmtShort(item.actualAmount)}</span><span className={`w-16 text-right font-bold ${diff>0?(isInc?"text-green-600":"text-red-500"):diff<0?(isInc?"text-red-500":"text-green-600"):"text-gray-400"}`}>{diff>0?"+":""}{fmtShort(diff)}</span></div>);})}
+              {(a.extraItems||[]).map((item)=><div key={item.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-blue-50 text-xs"><span className="text-blue-700 flex-1">{item.label} <span className="text-blue-400">(추가)</span></span><span className="font-bold w-20 text-right text-blue-800">{fmtShort(item.actualAmount||item.amount)}</span></div>)}</div></Card>
+            </>;
+          })()}
+        </div>}
+        {sumTab==="yearly" && <div className="space-y-4">
+          <Card className="!p-4"><div className="flex items-center gap-3"><label className="text-sm font-semibold text-gray-600">연도:</label><select value={sumYear} onChange={(e)=>setSumYear(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none bg-white">{(years.length?years:[String(new Date().getFullYear())]).map((y)=><option key={y} value={y}>{y}년</option>)}</select></div></Card>
+          <div className="grid grid-cols-3 gap-3">{[["연간 수입",yearData.income,"text-blue-600"],["연간 지출",yearData.expense,"text-red-500"],["연간 순저축",yearData.income-yearData.expense,(yearData.income-yearData.expense)>=0?"text-green-600":"text-red-500"]].map(([l,v,c])=><Card key={l} className="!p-4 text-center"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-sm font-bold ${c}`}>{fmtShort(v)}</p></Card>)}</div>
+          {yearData.months.length>0&&<Card><SectionTitle>월별 수입/지출</SectionTitle><ResponsiveContainer width="100%" height={220}><BarChart data={yearData.months} margin={{top:5,right:5,bottom:5,left:0}}><CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/><XAxis dataKey="label" tick={{fontSize:11}}/><YAxis tickFormatter={(v)=>fmtShort(v)} tick={{fontSize:11}}/><Tooltip formatter={(v)=>fmt(v)}/><Legend wrapperStyle={{fontSize:11}}/><Bar dataKey="income" name="수입" fill="#4F86C6" radius={[4,4,0,0]}/><Bar dataKey="expense" name="지출" fill="#E85D75" radius={[4,4,0,0]}/></BarChart></ResponsiveContainer></Card>}
+          {yearData.months.length>0&&<Card><SectionTitle>월별 순저축</SectionTitle><ResponsiveContainer width="100%" height={180}><LineChart data={yearData.months} margin={{top:5,right:5,bottom:5,left:0}}><CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/><XAxis dataKey="label" tick={{fontSize:11}}/><YAxis tickFormatter={(v)=>fmtShort(v)} tick={{fontSize:11}}/><Tooltip formatter={(v)=>fmt(v)}/><Line type="monotone" dataKey="net" name="순저축" stroke="#82C596" strokeWidth={2} dot={{fill:"#82C596"}}/></LineChart></ResponsiveContainer></Card>}
+        </div>}
+      </div>}
+
+      <Modal open={im} onClose={()=>setIm(false)} title={ei?"항목 수정":"항목 추가"}><div className="space-y-3"><Sel label="카테고리" value={iForm.category} onChange={(v)=>setIForm((f)=>({...f,category:v}))} options={ALL_PLAN_CATEGORIES}/><Inp label="항목명" value={iForm.label} onChange={(v)=>setIForm((f)=>({...f,label:v}))} required/><Inp label="금액 (원)" type="number" value={iForm.amount} onChange={(v)=>setIForm((f)=>({...f,amount:v}))}/><Inp label="메모" value={iForm.memo} onChange={(v)=>setIForm((f)=>({...f,memo:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setIm(false)}>취소</Btn><Btn onClick={saveItem}>저장</Btn></div></div></Modal>
+      <Modal open={vm} onClose={()=>setVm(false)} title="새 버전 생성"><div className="space-y-3"><p className="text-xs text-gray-500">기존 활성 버전을 복사해서 새 버전이 만들어집니다.</p><Inp label="버전 이름" value={vForm.label} onChange={(v)=>setVForm((f)=>({...f,label:v}))} placeholder="ex) v2 (2025.07~)" required/><Inp label="적용 시작일" type="date" value={vForm.startDate} onChange={(v)=>setVForm((f)=>({...f,startDate:v}))} required/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setVm(false)}>취소</Btn><Btn onClick={createVer}>생성</Btn></div></div></Modal>
+      <Confirm open={!!cdi} message="이 항목을 삭제하시겠습니까?" onConfirm={()=>{if(!curPlan)return; setData((d)=>({...d,incomeExpensePlans:d.incomeExpensePlans.map((p)=>p.id===curPlan.id?{...p,items:p.items.filter((i)=>i.id!==cdi)}:p)})); setCdi(null);}} onCancel={()=>setCdi(null)}/>
+      <Confirm open={!!cdv} message="이 버전을 삭제하시겠습니까?" onConfirm={()=>{setData((d)=>({...d,incomeExpensePlans:d.incomeExpensePlans.filter((p)=>p.id!==cdv)})); setCdv(null); setSelVer(null);}} onCancel={()=>setCdv(null)}/>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────
+// 재무상태표
+// ─────────────────────────────────────────────
+const BalanceSheetSection = ({ data, setData }) => {
+  const [selSnap, setSelSnap] = useState(null);
+  const [sm, setSm] = useState(false); const [sf, setSf] = useState({ yearMonth:thisYearMonth(), memo:"" });
+  const [cd, setCd] = useState(null);
+  const totF=data.accounts.reduce((s,a)=>s+(a.balance||0),0);
+  const totR=data.realEstate.reduce((s,r)=>s+(r.currentPrice||0),0);
+  const totL=data.loans.reduce((s,l)=>s+(l.balance||0),0);
+  const totA=totF+totR; const nw=totA-totL;
+  const takeSnap = () => {
+    const detail={ financialByCategory:ACCOUNT_CATEGORIES.map((cat)=>({category:cat.label,amount:data.accounts.filter((a)=>a.category===cat.value).reduce((s,a)=>s+(a.balance||0),0)})).filter((d)=>d.amount>0), realEstateItems:data.realEstate.map((r)=>({name:r.name,currentPrice:r.currentPrice})), loanItems:data.loans.map((l)=>({name:l.name,balance:l.balance})) };
+    const ex=data.balanceSheetSnapshots.find((s)=>s.yearMonth===sf.yearMonth);
+    const snap={id:ex?.id||genId(),yearMonth:sf.yearMonth,memo:sf.memo,totalAssets:totA,realEstateAssets:totR,financialAssets:totF,totalLiabilities:totL,netWorth:nw,detail,createdAt:new Date().toISOString()};
+    setData((d)=>({...d,balanceSheetSnapshots:ex?d.balanceSheetSnapshots.map((s)=>s.yearMonth===sf.yearMonth?snap:s):[...d.balanceSheetSnapshots,snap]}));
+    setSm(false); alert("스냅샷이 저장되었습니다!");
+  };
+  const sorted=[...data.balanceSheetSnapshots].sort((a,b)=>a.yearMonth.localeCompare(b.yearMonth));
+  const chartData=sorted.map((s)=>({label:ymLabel(s.yearMonth),자산:s.totalAssets,부채:s.totalLiabilities,순자산:s.netWorth}));
+  return (
+    <div className="space-y-4">
+      <Card>
+        <div className="flex items-center justify-between mb-4"><SectionTitle>📋 현재 재무 현황</SectionTitle><Btn size="sm" onClick={()=>{setSf({yearMonth:thisYearMonth(),memo:""});setSm(true);}}>📸 스냅샷 저장</Btn></div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[["총자산",totA,"#1a2744"],["부동산",totR,"#82C596"],["금융자산",totF,"#4F86C6"],["총부채",totL,"#E85D75"]].map(([l,v,c])=><div key={l} className="p-3 rounded-xl bg-gray-50 text-center"><p className="text-xs text-gray-400 mb-1">{l}</p><p className="text-sm font-bold" style={{color:c}}>{fmtShort(v)}</p></div>)}</div>
+        <div className="mt-3 p-4 rounded-xl bg-[#1a2744] text-white text-center"><p className="text-xs text-blue-200 mb-1">순자산</p><p className="text-2xl font-extrabold">{fmt(nw)}</p></div>
+      </Card>
+      {chartData.length>=2&&<Card><SectionTitle>📈 순자산 추이</SectionTitle><ResponsiveContainer width="100%" height={220}><LineChart data={chartData} margin={{top:5,right:5,bottom:5,left:0}}><CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/><XAxis dataKey="label" tick={{fontSize:11}}/><YAxis tickFormatter={(v)=>fmtShort(v)} tick={{fontSize:11}}/><Tooltip formatter={(v)=>fmt(v)}/><Legend wrapperStyle={{fontSize:11}}/><Line type="monotone" dataKey="자산" stroke="#4F86C6" strokeWidth={2} dot={false}/><Line type="monotone" dataKey="부채" stroke="#E85D75" strokeWidth={2} dot={false}/><Line type="monotone" dataKey="순자산" stroke="#82C596" strokeWidth={2.5} dot={{fill:"#82C596",r:3}}/></LineChart></ResponsiveContainer></Card>}
+      <Card>
+        <SectionTitle>🗓 월별 스냅샷 이력</SectionTitle>
+        {!sorted.length&&<p className="text-sm text-gray-400 text-center py-6">저장된 스냅샷이 없습니다</p>}
+        <div className="space-y-2">{[...sorted].reverse().map((s) => {
+          const idx=sorted.findIndex((x)=>x.id===s.id); const prev=sorted[idx-1]; const diff=prev?s.netWorth-prev.netWorth:null;
+          return (
+            <div key={s.id} className={`p-3 rounded-xl border cursor-pointer transition-all ${selSnap===s.id?"border-[#1a2744] bg-blue-50":"border-gray-100 bg-gray-50 hover:bg-gray-100"}`} onClick={()=>setSelSnap(selSnap===s.id?null:s.id)}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3"><span className="text-sm font-bold text-gray-700">{ymLabel(s.yearMonth)}</span>{s.memo&&<span className="text-xs text-gray-400">{s.memo}</span>}</div>
+                <div className="flex items-center gap-3"><span className="text-sm font-bold text-[#1a2744]">{fmtShort(s.netWorth)}</span>{diff!=null&&<span className={`text-xs font-bold ${diff>=0?"text-green-600":"text-red-500"}`}>{diff>=0?"+":""}{fmtShort(diff)}</span>}<Btn size="sm" variant="danger" onClick={(e)=>{e.stopPropagation();setCd(s.id);}}>삭제</Btn></div>
+              </div>
+              {selSnap===s.id&&<div className="mt-3 pt-3 border-t border-blue-100 space-y-3">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{[["총자산",s.totalAssets],["부동산",s.realEstateAssets],["금융자산",s.financialAssets],["총부채",s.totalLiabilities]].map(([l,v])=><div key={l} className="bg-white rounded-lg p-2 text-center"><p className="text-xs text-gray-400">{l}</p><p className="text-xs font-bold text-gray-700">{fmtShort(v)}</p></div>)}</div>
+                {s.detail?.financialByCategory?.length>0&&<div><p className="text-xs font-bold text-gray-500 mb-1">금융자산 세부</p><div className="grid grid-cols-2 gap-1">{s.detail.financialByCategory.map((d)=><div key={d.category} className="flex justify-between bg-white rounded-lg px-2 py-1 text-xs"><span className="text-gray-500">{d.category}</span><span className="font-semibold">{fmtShort(d.amount)}</span></div>)}</div></div>}
+                {s.detail?.realEstateItems?.length>0&&<div><p className="text-xs font-bold text-gray-500 mb-1">부동산 세부</p>{s.detail.realEstateItems.map((r)=><div key={r.name} className="flex justify-between bg-white rounded-lg px-2 py-1 text-xs"><span className="text-gray-500">{r.name}</span><span className="font-semibold">{fmtShort(r.currentPrice)}</span></div>)}</div>}
+                {s.detail?.loanItems?.length>0&&<div><p className="text-xs font-bold text-gray-500 mb-1">부채 세부</p>{s.detail.loanItems.map((l)=><div key={l.name} className="flex justify-between bg-white rounded-lg px-2 py-1 text-xs"><span className="text-gray-500">{l.name}</span><span className="font-semibold text-red-500">{fmtShort(l.balance)}</span></div>)}</div>}
+              </div>}
+            </div>
+          );
+        })}</div>
+      </Card>
+      <Modal open={sm} onClose={()=>setSm(false)} title="스냅샷 저장"><div className="space-y-3"><p className="text-xs text-gray-500">현재 자산/부채 데이터를 해당 월 기록으로 저장합니다.</p><Inp label="기록 월" type="month" value={sf.yearMonth} onChange={(v)=>setSf((f)=>({...f,yearMonth:v}))}/><Inp label="메모" value={sf.memo} onChange={(v)=>setSf((f)=>({...f,memo:v}))}/><div className="p-3 rounded-xl bg-gray-50 space-y-1 text-sm">{[["총자산",totA],["부동산",totR],["금융자산",totF],["총부채",totL],["순자산",nw]].map(([l,v])=><div key={l} className="flex justify-between"><span className="text-gray-500">{l}</span><span className="font-bold">{fmt(v)}</span></div>)}</div><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setSm(false)}>취소</Btn><Btn onClick={takeSnap}>저장</Btn></div></div></Modal>
+      <Confirm open={!!cd} message="이 스냅샷을 삭제하시겠습니까?" onConfirm={()=>{setData((d)=>({...d,balanceSheetSnapshots:d.balanceSheetSnapshots.filter((s)=>s.id!==cd)}));setCd(null);setSelSnap(null);}} onCancel={()=>setCd(null)}/>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────
+// 대시보드
+// ─────────────────────────────────────────────
+const DashboardSection = ({ data }) => {
+  const totF=data.accounts.reduce((s,a)=>s+(a.balance||0),0);
+  const totR=data.realEstate.reduce((s,r)=>s+(r.currentPrice||0),0);
+  const totL=data.loans.reduce((s,l)=>s+(l.balance||0),0);
+  const totA=totF+totR; const nw=totA-totL;
+  const lastSnaps=[...data.balanceSheetSnapshots].sort((a,b)=>b.yearMonth.localeCompare(a.yearMonth));
+  const snapDiff=lastSnaps.length>=2?lastSnaps[0].netWorth-lastSnaps[1].netWorth:null;
+  const thisYM=thisYearMonth();
+  const thisActual=data.monthlyActuals.find((a)=>a.yearMonth===thisYM);
+  const getIncExp=(a)=>{if(!a)return[null,null]; const inc=a.items.filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0)+(a.extraItems||[]).filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0); const exp=a.items.filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0)+(a.extraItems||[]).filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||0),0); return[inc,exp];};
+  const [tInc,tExp]=getIncExp(thisActual);
+  const assetPie=[{name:"부동산",value:totR,color:"#82C596"},{name:"금융자산",value:totF,color:"#4F86C6"}].filter((d)=>d.value>0);
+  const finPie=ACCOUNT_CATEGORIES.map((cat)=>({name:cat.label,value:data.accounts.filter((a)=>a.category===cat.value).reduce((s,a)=>s+(a.balance||0),0),color:cat.color})).filter((d)=>d.value>0);
+  const snapChart=[...data.balanceSheetSnapshots].sort((a,b)=>a.yearMonth.localeCompare(b.yearMonth)).slice(-12).map((s)=>({label:ymLabel(s.yearMonth),순자산:s.netWorth}));
+  return (
+    <div className="space-y-4">
+      <div className="p-5 rounded-2xl text-white shadow-lg" style={{background:"linear-gradient(135deg, #1a2744 0%, #2d4270 100%)"}}>
+        <p className="text-xs text-blue-200 mb-1">총 순자산</p>
+        <p className="text-3xl font-extrabold mb-2">{fmt(nw)}</p>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-xs text-blue-200">총자산 {fmtShort(totA)}</span>
+          <span className="text-xs text-blue-300">|</span>
+          <span className="text-xs text-blue-200">총부채 {fmtShort(totL)}</span>
+          {snapDiff!=null&&<span className={`text-xs font-bold px-2 py-0.5 rounded-full ${snapDiff>=0?"bg-green-500/20 text-green-300":"bg-red-500/20 text-red-300"}`}>전월비 {snapDiff>=0?"+":""}{fmtShort(snapDiff)}</span>}
+        </div>
+      </div>
+      {assetPie.length>0&&<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Card><SectionTitle>부동산 vs 금융자산</SectionTitle><ResponsiveContainer width="100%" height={180}><PieChart><Pie data={assetPie} cx="50%" cy="50%" innerRadius={45} outerRadius={75} dataKey="value" label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={11}>{assetPie.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart></ResponsiveContainer></Card>
+        <Card><SectionTitle>금융자산 구성</SectionTitle><ResponsiveContainer width="100%" height={180}><PieChart><Pie data={finPie} cx="50%" cy="50%" innerRadius={45} outerRadius={75} dataKey="value" label={({name,percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={10}>{finPie.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart></ResponsiveContainer></Card>
+      </div>}
+      <Card><SectionTitle>💰 이달 수입/지출 ({ymLabel(thisYM)})</SectionTitle>
+        {thisActual?<div className="grid grid-cols-3 gap-3 text-center">{[["수입",tInc,"text-blue-600"],["지출",tExp,"text-red-500"],["순저축",tInc-tExp,(tInc-tExp)>=0?"text-green-600":"text-red-500"]].map(([l,v,c])=><div key={l} className="p-3 rounded-xl bg-gray-50"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-base font-bold ${c}`}>{fmtShort(v)}</p></div>)}</div>
+        :<p className="text-sm text-gray-400 text-center py-4">이달 실적이 아직 입력되지 않았습니다</p>}
+      </Card>
+      {snapChart.length>=2&&<Card><SectionTitle>📈 순자산 추이</SectionTitle><ResponsiveContainer width="100%" height={180}><LineChart data={snapChart} margin={{top:5,right:5,bottom:5,left:0}}><CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/><XAxis dataKey="label" tick={{fontSize:11}}/><YAxis tickFormatter={(v)=>fmtShort(v)} tick={{fontSize:11}}/><Tooltip formatter={(v)=>fmt(v)}/><Line type="monotone" dataKey="순자산" stroke="#4F86C6" strokeWidth={2.5} dot={{fill:"#4F86C6",r:3}}/></LineChart></ResponsiveContainer></Card>}
+      <Card><SectionTitle>📌 요약</SectionTitle><div className="grid grid-cols-2 gap-2 text-sm">{[["계좌 수",data.accounts.length+"개"],["부동산",data.realEstate.length+"건"],["대출",data.loans.length+"건"],["월 총 적립금",fmtShort(data.accounts.reduce((s,a)=>s+(a.monthlyDeposit||0),0))]].map(([l,v])=><div key={l} className="flex justify-between p-2 rounded-lg bg-gray-50"><span className="text-gray-500">{l}</span><span className="font-bold text-gray-800">{v}</span></div>)}</div></Card>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────
+// 계좌관리
+// ─────────────────────────────────────────────
+const AccountBookSection = ({ data, setData }) => {
+  const [activeTab, setActiveTab] = useState(data.members[0]?.id||"");
+  const [subTab, setSubTab] = useState("accounts");
+  const [modal, setModal] = useState(false); const [editE, setEditE] = useState(null); const [form, setForm] = useState({ memberId:"", bank:"", accountNumber:"", description:"", category:"cash", note:"" }); const [cd, setCd] = useState(null);
+  const [cardModal, setCardModal] = useState(false); const [editC, setEditC] = useState(null); const [cForm, setCForm] = useState({ memberId:"", cardName:"", description:"", autoDebitAmount:"", note:"" }); const [cdc, setCdc] = useState(null);
+  const entries=(data.accountBook||[]).filter((e)=>e.memberId===activeTab&&!e.isCard);
+  const cards=(data.accountBook||[]).filter((e)=>e.memberId===activeTab&&e.isCard);
+  const getCatL=(v)=>ACCOUNT_CATEGORIES.find((c)=>c.value===v)?.label||v;
+  const getCatC=(v)=>ACCOUNT_CATEGORIES.find((c)=>c.value===v)?.color||"#aaa";
+  const oa=()=>{setEditE(null);setForm({memberId:activeTab,bank:"",accountNumber:"",description:"",category:"cash",note:""});setModal(true);};
+  const sv=()=>{if(!form.bank.trim())return; const e={id:editE?.id||genId(),...form,isCard:false}; setData((d)=>({...d,accountBook:editE?(d.accountBook||[]).map((x)=>x.id===editE.id?e:x):[...(d.accountBook||[]),e]})); setModal(false);};
+  const oc=()=>{setEditC(null);setCForm({memberId:activeTab,cardName:"",description:"",autoDebitAmount:"",note:""});setCardModal(true);};
+  const sc=()=>{if(!cForm.cardName.trim())return; const e={id:editC?.id||genId(),...cForm,isCard:true,autoDebitAmount:Number(cForm.autoDebitAmount)||0}; setData((d)=>({...d,accountBook:editC?(d.accountBook||[]).map((x)=>x.id===editC.id?e:x):[...(d.accountBook||[]),e]})); setCardModal(false);};
+  const totAD=cards.reduce((s,c)=>s+(c.autoDebitAmount||0),0);
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1 flex-wrap">{data.members.map((m)=><button key={m.id} onClick={()=>setActiveTab(m.id)} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${activeTab===m.id?"text-white shadow-sm":"bg-gray-100 text-gray-600 hover:bg-gray-200"}`} style={activeTab===m.id?{background:m.color}:{}}>{m.name}</button>)}</div>
+      <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">{[["accounts","계좌 목록"],["cards","카드/자동이체"]].map(([k,l])=><button key={k} onClick={()=>setSubTab(k)} className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${subTab===k?"bg-white text-[#1a2744] shadow-sm":"text-gray-500"}`}>{l}</button>)}</div>
+      {subTab==="accounts"&&<Card>
+        <div className="flex items-center justify-between mb-4"><SectionTitle>📒 {data.members.find((m)=>m.id===activeTab)?.name} 계좌 목록</SectionTitle><Btn size="sm" onClick={oa}>+ 추가</Btn></div>
+        <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-xs text-gray-400 border-b border-gray-100">{["No.","은행/증권사","계좌번호","설명","카테고리","비고",""].map((h)=><th key={h} className="text-left py-2 pr-2 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
+        <tbody>{entries.map((e,i)=><tr key={e.id} className="border-b border-gray-50 hover:bg-gray-50"><td className="py-2 pr-2 text-gray-400 text-xs">{i+1}</td><td className="py-2 pr-2 font-semibold text-gray-800 whitespace-nowrap">{e.bank}</td><td className="py-2 pr-2 text-gray-500 font-mono text-xs whitespace-nowrap">{e.accountNumber||"-"}</td><td className="py-2 pr-2 text-gray-600 text-xs">{e.description||"-"}</td><td className="py-2 pr-2"><Badge color={getCatC(e.category)} label={getCatL(e.category)}/></td><td className="py-2 pr-2 text-gray-400 text-xs">{e.note||"-"}</td><td className="py-2"><div className="flex gap-1"><Btn size="sm" variant="ghost" onClick={()=>{setEditE(e);setForm({...e});setModal(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCd(e.id)}>삭제</Btn></div></td></tr>)}
+        {!entries.length&&<tr><td colSpan={7} className="text-center py-8 text-gray-400 text-sm">등록된 계좌가 없습니다</td></tr>}</tbody></table></div>
+      </Card>}
+      {subTab==="cards"&&<Card>
+        <div className="flex items-center justify-between mb-4"><SectionTitle>💳 {data.members.find((m)=>m.id===activeTab)?.name} 카드/자동이체</SectionTitle><Btn size="sm" onClick={oc}>+ 추가</Btn></div>
+        <div className="space-y-2">{cards.map((c)=><div key={c.id} className="flex items-center justify-between p-3 rounded-xl bg-gray-50"><div className="flex-1"><div className="flex items-center gap-2"><span className="text-sm font-semibold text-gray-800">{c.cardName}</span>{c.description&&<span className="text-xs text-gray-500">{c.description}</span>}</div>{c.note&&<p className="text-xs text-gray-400">{c.note}</p>}</div><div className="flex items-center gap-2 ml-2 shrink-0">{c.autoDebitAmount>0&&<span className="text-sm font-bold text-gray-700">{fmt(c.autoDebitAmount)}</span>}<Btn size="sm" variant="ghost" onClick={()=>{setEditC(c);setCForm({...c});setCardModal(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCdc(c.id)}>삭제</Btn></div></div>)}{!cards.length&&<p className="text-sm text-gray-400 text-center py-6">등록된 카드가 없습니다</p>}</div>
+        {totAD>0&&<div className="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-100 flex justify-between"><span className="text-xs font-semibold text-amber-700">💳 월 자동이체 합계</span><span className="text-sm font-bold text-amber-700">{fmt(totAD)}</span></div>}
+      </Card>}
+      <Modal open={modal} onClose={()=>setModal(false)} title={editE?"계좌 수정":"계좌 추가"}><div className="space-y-3"><Sel label="소유자" value={form.memberId} onChange={(v)=>setForm((f)=>({...f,memberId:v}))} options={data.members.map((m)=>({value:m.id,label:m.name}))}/><Inp label="은행/증권사" value={form.bank} onChange={(v)=>setForm((f)=>({...f,bank:v}))} required/><Inp label="계좌번호" value={form.accountNumber} onChange={(v)=>setForm((f)=>({...f,accountNumber:v}))}/><Inp label="설명" value={form.description} onChange={(v)=>setForm((f)=>({...f,description:v}))}/><Sel label="카테고리" value={form.category} onChange={(v)=>setForm((f)=>({...f,category:v}))} options={ACCOUNT_CATEGORIES}/><Inp label="비고" value={form.note} onChange={(v)=>setForm((f)=>({...f,note:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setModal(false)}>취소</Btn><Btn onClick={sv}>저장</Btn></div></div></Modal>
+      <Modal open={cardModal} onClose={()=>setCardModal(false)} title={editC?"카드 수정":"카드 추가"}><div className="space-y-3"><Sel label="소유자" value={cForm.memberId} onChange={(v)=>setCForm((f)=>({...f,memberId:v}))} options={data.members.map((m)=>({value:m.id,label:m.name}))}/><Inp label="카드명" value={cForm.cardName} onChange={(v)=>setCForm((f)=>({...f,cardName:v}))} required/><Inp label="설명" value={cForm.description} onChange={(v)=>setCForm((f)=>({...f,description:v}))}/><Inp label="월 자동이체 금액" type="number" value={cForm.autoDebitAmount} onChange={(v)=>setCForm((f)=>({...f,autoDebitAmount:v}))}/><Inp label="비고" value={cForm.note} onChange={(v)=>setCForm((f)=>({...f,note:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setCardModal(false)}>취소</Btn><Btn onClick={sc}>저장</Btn></div></div></Modal>
+      <Confirm open={!!cd} message="삭제하시겠습니까?" onConfirm={()=>{setData((d)=>({...d,accountBook:(d.accountBook||[]).filter((e)=>e.id!==cd)}));setCd(null);}} onCancel={()=>setCd(null)}/>
+      <Confirm open={!!cdc} message="삭제하시겠습니까?" onConfirm={()=>{setData((d)=>({...d,accountBook:(d.accountBook||[]).filter((e)=>e.id!==cdc)}));setCdc(null);}} onCancel={()=>setCdc(null)}/>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────
+// 메인 앱
+// ─────────────────────────────────────────────
+const NAV_ITEMS = [
+  { key:"dashboard", label:"대시보드", icon:"📊" },
+  { key:"assets", label:"자산현황", icon:"🏦" },
+  { key:"income", label:"수입/지출", icon:"💰" },
+  { key:"balance", label:"재무상태표", icon:"📋" },
+  { key:"accountbook", label:"계좌관리", icon:"📒" },
+  { key:"settings", label:"설정", icon:"⚙️" },
+];
+
+export default function App() {
+  const [data, setDataRaw] = useState(loadData);
+  const [activeNav, setActiveNav] = useState("dashboard");
+  const setData = useCallback((updater) => {
+    setDataRaw((prev) => { const next = typeof updater === "function" ? updater(prev) : updater; saveData(next); return next; });
+  }, []);
+  const nav = NAV_ITEMS.find((n) => n.key === activeNav);
+  return (
+    <div className="min-h-screen bg-[#f4f6fb] flex flex-col" style={{ fontFamily:"'Pretendard','Apple SD Gothic Neo','Noto Sans KR',sans-serif" }}>
+      <header className="bg-[#1a2744] text-white px-5 py-3 flex items-center justify-between sticky top-0 z-30 shadow-lg">
+        <div className="flex items-center gap-2">
+          <span className="text-xl">💼</span>
+          <div><h1 className="text-sm font-extrabold tracking-tight leading-tight">우리가정 자산관리사</h1><p className="text-xs text-blue-200 leading-tight">{data.members.map((m)=>m.name).join(" · ")}</p></div>
+        </div>
+        <div className="text-xs text-blue-200">{new Date().toLocaleDateString("ko-KR",{year:"numeric",month:"long"})}</div>
+      </header>
+      <div className="flex flex-1 overflow-hidden">
+        <nav className="hidden sm:flex flex-col w-48 bg-white border-r border-gray-100 py-4 gap-0.5 sticky top-[52px] h-[calc(100vh-52px)] shadow-sm shrink-0">
+          {NAV_ITEMS.map((item) => <button key={item.key} onClick={()=>setActiveNav(item.key)} className={`flex items-center gap-3 px-4 py-2.5 text-sm font-semibold transition-all ${activeNav===item.key?"bg-[#1a2744] text-white rounded-r-2xl":"text-gray-500 hover:bg-gray-50 hover:text-gray-800"}`}><span>{item.icon}</span>{item.label}</button>)}
+        </nav>
+        <main className="flex-1 overflow-y-auto p-4 pb-24 sm:pb-6">
+          <div className="max-w-2xl mx-auto">
+            <div className="mb-4 flex items-center gap-2"><span className="text-xl">{nav?.icon}</span><h2 className="text-lg font-extrabold text-[#1a2744]">{nav?.label}</h2></div>
+            {activeNav==="dashboard"&&<DashboardSection data={data}/>}
+            {activeNav==="assets"&&<AssetsSection data={data} setData={setData}/>}
+            {activeNav==="income"&&<IncomeExpenseSection data={data} setData={setData}/>}
+            {activeNav==="balance"&&<BalanceSheetSection data={data} setData={setData}/>}
+            {activeNav==="accountbook"&&<AccountBookSection data={data} setData={setData}/>}
+            {activeNav==="settings"&&<SettingsSection data={data} setData={setData}/>}
+          </div>
+        </main>
+      </div>
+      <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 flex justify-around items-center py-1.5 z-30 shadow-lg">
+        {NAV_ITEMS.map((item) => <button key={item.key} onClick={()=>setActiveNav(item.key)} className={`flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl transition-all ${activeNav===item.key?"text-[#1a2744]":"text-gray-400"}`}><span className="text-lg">{item.icon}</span><span className="text-[9px] font-semibold">{item.label}</span></button>)}
+      </nav>
+    </div>
+  );
+}
