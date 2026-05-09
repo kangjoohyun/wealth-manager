@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend, BarChart, Bar } from "recharts";
 
 // ─────────────────────────────────────────────
@@ -63,6 +63,35 @@ const MEMBER_COLORS = ["#4F86C6","#E8A87C","#82C596","#E85D75","#9B6FD4","#F0C04
 // 스토리지
 // ─────────────────────────────────────────────
 const STORAGE_KEY = "wealth_manager_v2";
+const GAS_URL = "https://script.google.com/macros/s/AKfycbx7kmdJuLA2ZKAPDW8Ip37xogGYmG4n5nlOl0Z6teL1R5lUEl2JUE96htjYA-0p3h5MZg/exec";
+
+// Google Sheets 동기화
+const syncToSheets = async (data) => {
+  try {
+    await fetch(GAS_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    return true;
+  } catch (e) {
+    console.error("Sheets 저장 실패:", e);
+    return false;
+  }
+};
+
+const syncFromSheets = async () => {
+  try {
+    const res = await fetch(GAS_URL + "?t=" + Date.now());
+    const text = await res.text();
+    if (!text || text === "{}") return null;
+    return JSON.parse(text);
+  } catch (e) {
+    console.error("Sheets 불러오기 실패:", e);
+    return null;
+  }
+};
 const loadData = () => {
   try { const r = localStorage.getItem(STORAGE_KEY); return r ? { ...DEFAULT_DATA, ...JSON.parse(r) } : DEFAULT_DATA; }
   catch { return DEFAULT_DATA; }
@@ -309,6 +338,24 @@ category 규칙: 예금/입출금→cash, 국내주식/ETF→domestic_stock, 해
       <Card>
         <SectionTitle>💾 데이터 관리</SectionTitle>
         <div className="space-y-3">
+          {/* Google Sheets 동기화 */}
+          <div className="p-3 rounded-xl bg-green-50 border border-green-100">
+            <p className="text-xs font-semibold text-green-700 mb-1">☁️ Google Sheets 동기화</p>
+            <p className="text-xs text-green-500 mb-2">모든 기기에서 동일한 데이터 사용</p>
+            <div className="flex gap-2 flex-wrap">
+              <Btn size="sm" variant="secondary" onClick={async () => {
+                const ok = await syncToSheets(data);
+                alert(ok ? "✅ Google Sheets에 저장됐어요!" : "❌ 저장 실패. 인터넷 연결을 확인해주세요.");
+              }}>☁️ 업로드 (저장)</Btn>
+              <Btn size="sm" variant="secondary" onClick={async () => {
+                if (!window.confirm("Google Sheets 데이터로 덮어쓸까요?")) return;
+                const remote = await syncFromSheets();
+                if (!remote) { alert("❌ 불러오기 실패. 저장된 데이터가 없거나 오류가 발생했어요."); return; }
+                setData({ ...DEFAULT_DATA, ...remote });
+                alert("✅ 불러오기 완료!");
+              }}>📥 다운로드 (불러오기)</Btn>
+            </div>
+          </div>
           {/* JSON */}
           <div className="p-3 rounded-xl bg-blue-50 border border-blue-100">
             <p className="text-xs font-semibold text-blue-700 mb-2">전체 백업 (JSON)</p>
@@ -917,8 +964,59 @@ const NAV_ITEMS = [
 export default function App() {
   const [data, setDataRaw] = useState(loadData);
   const [activeNav, setActiveNav] = useState("dashboard");
+  const [syncStatus, setSyncStatus] = useState(""); // "", "syncing", "ok", "error"
+  const lastSyncRef = React.useRef(0);
+
   const setData = useCallback((updater) => {
     setDataRaw((prev) => { const next = typeof updater === "function" ? updater(prev) : updater; saveData(next); return next; });
+  }, []);
+
+  // 자동 동기화: 30초마다 Sheets에서 불러오기
+  React.useEffect(() => {
+    const autoSync = async () => {
+      setSyncStatus("syncing");
+      try {
+        const remote = await syncFromSheets();
+        if (remote && Object.keys(remote).length > 0) {
+          const remoteStr = JSON.stringify(remote);
+          const localStr = JSON.stringify(loadData());
+          if (remoteStr !== localStr) {
+            setDataRaw((prev) => {
+              const merged = { ...DEFAULT_DATA, ...remote };
+              saveData(merged);
+              return merged;
+            });
+          }
+          setSyncStatus("ok");
+          lastSyncRef.current = Date.now();
+        } else {
+          setSyncStatus("ok");
+        }
+      } catch {
+        setSyncStatus("error");
+      }
+    };
+
+    autoSync(); // 앱 시작시 즉시 한번
+    const interval = setInterval(autoSync, 30000); // 30초마다
+    return () => clearInterval(interval);
+  }, []);
+
+  // 데이터 변경시 자동 업로드 (1초 디바운스)
+  const uploadTimerRef = React.useRef(null);
+  const setData2 = useCallback((updater) => {
+    setDataRaw((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      saveData(next);
+      // 디바운스 업로드
+      if (uploadTimerRef.current) clearTimeout(uploadTimerRef.current);
+      uploadTimerRef.current = setTimeout(async () => {
+        setSyncStatus("syncing");
+        const ok = await syncToSheets(next);
+        setSyncStatus(ok ? "ok" : "error");
+      }, 1000);
+      return next;
+    });
   }, []);
   const nav = NAV_ITEMS.find((n) => n.key === activeNav);
   return (
@@ -928,7 +1026,12 @@ export default function App() {
           <span className="text-xl">💼</span>
           <div><h1 className="text-sm font-extrabold tracking-tight leading-tight">우리가정 자산관리사</h1><p className="text-xs text-blue-200 leading-tight">{data.members.map((m)=>m.name).join(" · ")}</p></div>
         </div>
-        <div className="text-xs text-blue-200">{new Date().toLocaleDateString("ko-KR",{year:"numeric",month:"long"})}</div>
+        <div className="flex items-center gap-2">
+          <div className="text-xs text-blue-200">{new Date().toLocaleDateString("ko-KR",{year:"numeric",month:"long"})}</div>
+          {syncStatus==="syncing"&&<span className="text-xs text-blue-300 animate-pulse">⟳</span>}
+          {syncStatus==="ok"&&<span className="text-xs text-green-300">☁️</span>}
+          {syncStatus==="error"&&<span className="text-xs text-red-300">⚠️</span>}
+        </div>
       </header>
       <div className="flex flex-1 overflow-hidden">
         <nav className="hidden sm:flex flex-col w-48 bg-white border-r border-gray-100 py-4 gap-0.5 sticky top-[52px] h-[calc(100vh-52px)] shadow-sm shrink-0">
@@ -938,11 +1041,11 @@ export default function App() {
           <div className="max-w-2xl mx-auto">
             <div className="mb-4 flex items-center gap-2"><span className="text-xl">{nav?.icon}</span><h2 className="text-lg font-extrabold text-[#1a2744]">{nav?.label}</h2></div>
             {activeNav==="dashboard"&&<DashboardSection data={data}/>}
-            {activeNav==="assets"&&<AssetsSection data={data} setData={setData}/>}
-            {activeNav==="income"&&<IncomeExpenseSection data={data} setData={setData}/>}
-            {activeNav==="balance"&&<BalanceSheetSection data={data} setData={setData}/>}
-            {activeNav==="accountbook"&&<AccountBookSection data={data} setData={setData}/>}
-            {activeNav==="settings"&&<SettingsSection data={data} setData={setData}/>}
+            {activeNav==="assets"&&<AssetsSection data={data} setData={setData2}/>}
+            {activeNav==="income"&&<IncomeExpenseSection data={data} setData={setData2}/>}
+            {activeNav==="balance"&&<BalanceSheetSection data={data} setData={setData2}/>}
+            {activeNav==="accountbook"&&<AccountBookSection data={data} setData={setData2}/>}
+            {activeNav==="settings"&&<SettingsSection data={data} setData={setData2}/>}
           </div>
         </main>
       </div>
