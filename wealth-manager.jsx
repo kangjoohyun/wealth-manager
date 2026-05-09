@@ -806,10 +806,10 @@ const IncomeExpenseSection = ({ data, setData }) => {
 
   const monthlyData = useMemo(() => data.monthlyActuals.sort((a,b)=>a.yearMonth.localeCompare(b.yearMonth)).map((a) => {
     const all=[...a.items,...(a.extraItems||[])];
-    const regInc=all.filter((i)=>i.category==="regular_income").reduce((s,i)=>s+(i.actualAmount||i.amount||0),0);
-    const regExp=all.filter((i)=>REGULAR_EXPENSE_CATS.find((c)=>c.value===i.category)).reduce((s,i)=>s+(i.actualAmount||i.amount||0),0);
-    const irregInc=all.filter((i)=>i.category==="irregular_income").reduce((s,i)=>s+(i.actualAmount||i.amount||0),0);
-    const irregExp=all.filter((i)=>i.category==="irregular").reduce((s,i)=>s+(i.actualAmount||i.amount||0),0);
+    const regInc=all.filter((i)=>i.category==="regular_income").reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+    const regExp=all.filter((i)=>REGULAR_EXPENSE_CATS.find((c)=>c.value===i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+    const irregInc=all.filter((i)=>i.category==="irregular_income").reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+    const irregExp=all.filter((i)=>i.category==="irregular").reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
     return { ym:a.yearMonth, label:ymLabel(a.yearMonth), income:regInc, expense:regExp, net:regInc-regExp, irregInc, irregExp };
   }), [data.monthlyActuals]);
 
@@ -1108,48 +1108,81 @@ const IncomeExpenseSection = ({ data, setData }) => {
         {sumTab==="yearly" && <div className="space-y-4">
           <Card className="!p-4"><div className="flex items-center gap-3"><label className="text-sm font-semibold text-gray-600">연도:</label><select value={sumYear} onChange={(e)=>setSumYear(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none bg-white">{(years.length?years:[String(new Date().getFullYear())]).map((y)=><option key={y} value={y}>{y}년</option>)}</select></div></Card>
           {(() => {
-            // 연간 계획 기준
-            const planYearInc = activePlan ? activePlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0)*12 : 0;
-            const planYearExp = activePlan ? activePlan.items.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+i.amount,0)*12 : 0;
-            return (
-              <div className="grid grid-cols-2 gap-2">
-                <div className="text-center p-3 rounded-xl bg-blue-50"><p className="text-xs text-gray-400">계획 수입</p><p className="text-sm font-bold text-blue-400">{fmtShort(planYearInc)}</p></div>
-                <div className="text-center p-3 rounded-xl bg-blue-50"><p className="text-xs text-gray-400">실적 수입</p><p className="text-sm font-bold text-blue-600">{fmtShort(yearData.income)}</p></div>
-                <div className="text-center p-3 rounded-xl bg-red-50"><p className="text-xs text-gray-400">계획 지출</p><p className="text-sm font-bold text-red-300">{fmtShort(planYearExp)}</p></div>
-                <div className="text-center p-3 rounded-xl bg-red-50"><p className="text-xs text-gray-400">실적 지출</p><p className="text-sm font-bold text-red-500">{fmtShort(yearData.expense)}</p></div>
-                <div className="col-span-2 text-center p-3 rounded-xl bg-green-50">
-                  <p className="text-xs text-gray-400 mb-1">계획 순저축 <span className="text-gray-300 mx-1">→</span> 실적 순저축</p>
-                  <p className="text-sm font-bold"><span className="text-green-400">{fmtShort(planYearInc-planYearExp)}</span><span className="text-gray-300 mx-2">→</span><span className={yearData.income-yearData.expense>=0?"text-green-600":"text-red-500"}>{fmtShort(yearData.income-yearData.expense)}</span></p>
+            const yearActuals = data.monthlyActuals.filter(a=>a.yearMonth?.startsWith?.(sumYear));
+            const nMonths = yearActuals.length || 12;
+            // 계획: 정기 *12, 비정기는 그대로 (1회성)
+            const planCatData = activePlan ? [...REGULAR_EXPENSE_CATS, ...IRREGULAR_EXPENSE_CATS].map(cat => {
+              const isIrreg = cat.value === "irregular";
+              const sum = activePlan.items.filter(i=>i.category===cat.value).reduce((s,i)=>s+i.amount,0);
+              return { name: cat.label, value: isIrreg ? sum : sum*12, color: cat.color };
+            }).filter(d=>d.value>0) : [];
+            // 실적 카테고리별
+            const actCatData = [...REGULAR_EXPENSE_CATS, ...IRREGULAR_EXPENSE_CATS].map(cat => ({
+              name: cat.label, color: cat.color,
+              value: yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category===cat.value).reduce((s,i)=>s+(Number(i.actualAmount)||0),0)
+            })).filter(d=>d.value>0);
+            // 계획 수입: 정기*12 + 비정기수입 그대로
+            const planRegInc = activePlan ? activePlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0)*12 : 0;
+            const planIrregInc = activePlan ? activePlan.items.filter(i=>i.category==="irregular_income").reduce((s,i)=>s+i.amount,0) : 0;
+            const planInc = planRegInc + planIrregInc;
+            // 계획 지출: 정기*12 + 비정기 그대로
+            const planRegExp = activePlan ? activePlan.items.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+i.amount,0)*12 : 0;
+            const planIrregExp = activePlan ? activePlan.items.filter(i=>i.category==="irregular").reduce((s,i)=>s+i.amount,0) : 0;
+            const planExp = planRegExp + planIrregExp;
+            // 실적 수입/지출
+            const actInc = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category==="regular_income"||i.category==="irregular_income").reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+            const actExp = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>EXPENSE_CATEGORIES.find(c=>c.value===i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+            return <>
+              {/* 수입/지출 요약 */}
+              <div className="space-y-1 mb-1">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-2 rounded-xl bg-blue-50 text-center"><p className="text-xs text-gray-400">계획 수입<span className="text-gray-300 ml-1">(정기×12+비정기)</span></p><p className="text-base font-bold text-blue-400">{fmtShort(planInc)}</p><p className="text-xs text-gray-400">{fmtShort(planRegInc)}+{fmtShort(planIrregInc)}</p></div>
+                  <div className="p-2 rounded-xl bg-blue-50 text-center"><p className="text-xs text-gray-400">실적 수입 ({nMonths}개월)</p><p className="text-base font-bold text-blue-600">{fmtShort(actInc)}</p></div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-2 rounded-xl bg-red-50 text-center"><p className="text-xs text-gray-400">계획 지출<span className="text-gray-300 ml-1">(정기×12+비정기)</span></p><p className="text-base font-bold text-red-300">{fmtShort(planExp)}</p><p className="text-xs text-gray-400">{fmtShort(planRegExp)}+{fmtShort(planIrregExp)}</p></div>
+                  <div className="p-2 rounded-xl bg-red-50 text-center"><p className="text-xs text-gray-400">실적 지출</p><p className="text-base font-bold text-red-500">{fmtShort(actExp)}</p></div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-2 rounded-xl bg-green-50 text-center"><p className="text-xs text-gray-400">계획 순저축</p><p className="text-base font-bold text-green-400">{fmtShort(planInc-planExp)}</p></div>
+                  <div className="p-2 rounded-xl bg-green-50 text-center"><p className="text-xs text-gray-400">실적 순저축</p><p className={`text-base font-bold ${actInc-actExp>=0?"text-green-600":"text-red-500"}`}>{fmtShort(actInc-actExp)}</p></div>
                 </div>
               </div>
-            );
+              {/* 계획 도넛(왼) vs 실적 도넛(오) */}
+              {(planCatData.length>0||actCatData.length>0)&&<Card>
+                <SectionTitle>📊 지출 구성 비교</SectionTitle>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <p className="text-xs font-bold text-center text-gray-400 mb-2">계획</p>
+                    <ResponsiveContainer width="100%" height={160}>
+                      <PieChart><Pie data={planCatData} cx="50%" cy="50%" outerRadius={55} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={9}>{planCatData.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-center text-gray-400 mb-2">실적</p>
+                    <ResponsiveContainer width="100%" height={160}>
+                      <PieChart><Pie data={actCatData} cx="50%" cy="50%" outerRadius={55} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={9}>{actCatData.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+                {/* 범례 + 금액표 */}
+                <div className="mt-3 space-y-1">{[...REGULAR_EXPENSE_CATS,...IRREGULAR_EXPENSE_CATS].map(cat=>{
+                  const pv=planCatData.find(d=>d.name===cat.label)?.value||0;
+                  const av=actCatData.find(d=>d.name===cat.label)?.value||0;
+                  if(!pv&&!av) return null;
+                  return <div key={cat.value} className="flex items-center text-xs px-2 py-1.5 rounded-lg bg-gray-50">
+                    <div className="w-2 h-2 rounded-full mr-2 shrink-0" style={{background:cat.color}}/>
+                    <span className="flex-1 text-gray-600">{cat.label}</span>
+                    <span className="w-16 text-right text-gray-400">{fmtShort(pv)}</span>
+                    <span className="w-4 text-center text-gray-300">→</span>
+                    <span className={`w-16 text-right font-bold ${av>pv?"text-red-500":av<pv?"text-green-600":"text-gray-700"}`}>{fmtShort(av)}</span>
+                  </div>;
+                })}</div>
+              </Card>}
+              {/* 월별 차트 */}
+              {yearData.months.length>0&&<Card><SectionTitle>월별 수입/지출</SectionTitle><ResponsiveContainer width="100%" height={200}><BarChart data={yearData.months} margin={{top:5,right:5,bottom:5,left:0}}><CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/><XAxis dataKey="label" tick={{fontSize:10}}/><YAxis tickFormatter={(v)=>fmtShort(v)} tick={{fontSize:10}}/><Tooltip formatter={(v)=>fmt(v)}/><Legend wrapperStyle={{fontSize:10}}/><Bar dataKey="income" name="수입" fill="#4F86C6" radius={[4,4,0,0]}/><Bar dataKey="expense" name="지출" fill="#E85D75" radius={[4,4,0,0]}/></BarChart></ResponsiveContainer></Card>}
+            </>;
           })()}
-          {yearData.months.length>0&&<Card><SectionTitle>월별 수입/지출</SectionTitle><ResponsiveContainer width="100%" height={220}><BarChart data={yearData.months} margin={{top:5,right:5,bottom:5,left:0}}><CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/><XAxis dataKey="label" tick={{fontSize:11}}/><YAxis tickFormatter={(v)=>fmtShort(v)} tick={{fontSize:11}}/><Tooltip formatter={(v)=>fmt(v)}/><Legend wrapperStyle={{fontSize:11}}/><Bar dataKey="income" name="수입" fill="#4F86C6" radius={[4,4,0,0]}/><Bar dataKey="expense" name="지출" fill="#E85D75" radius={[4,4,0,0]}/></BarChart></ResponsiveContainer></Card>}
-          {(() => {
-            // 연간 지출 카테고리 합산 (비정기 포함)
-            const yearExpCatData = [...REGULAR_EXPENSE_CATS, ...IRREGULAR_EXPENSE_CATS].map(cat => {
-              const val = data.monthlyActuals.filter(a=>a.ym?.startsWith?.(sumYear)||a.yearMonth?.startsWith?.(sumYear))
-                .flatMap(a=>[...a.items,...(a.extraItems||[])])
-                .filter(i=>i.category===cat.value)
-                .reduce((s,i)=>s+(i.actualAmount||i.amount||0),0);
-              return { name: cat.label, value: val, color: cat.color };
-            }).filter(d=>d.value>0);
-            return yearExpCatData.length>0 ? (
-              <Card>
-                <SectionTitle>📊 연간 지출 비중 (비정기 포함)</SectionTitle>
-                <ResponsiveContainer width="100%" height={240}>
-                  <PieChart>
-                    <Pie data={yearExpCatData} cx="50%" cy="50%" outerRadius={75} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={10}>
-                      {yearExpCatData.map((d,i)=><Cell key={i} fill={d.color}/>)}
-                    </Pie>
-                    <Tooltip formatter={(v)=>fmt(v)}/>
-                    <Legend wrapperStyle={{fontSize:10}} formatter={(value,entry)=>`${value} ${fmtShort(entry.payload.value)}`}/>
-                  </PieChart>
-                </ResponsiveContainer>
-              </Card>
-            ) : null;
-          })()}
-          {yearData.months.length>0&&<Card><SectionTitle>월별 순저축</SectionTitle><ResponsiveContainer width="100%" height={180}><LineChart data={yearData.months} margin={{top:5,right:5,bottom:5,left:0}}><CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/><XAxis dataKey="label" tick={{fontSize:11}}/><YAxis tickFormatter={(v)=>fmtShort(v)} tick={{fontSize:11}}/><Tooltip formatter={(v)=>fmt(v)}/><Line type="monotone" dataKey="net" name="순저축" stroke="#82C596" strokeWidth={2} dot={{fill:"#82C596"}}/></LineChart></ResponsiveContainer></Card>}
         </div>}
       </div>}
 
@@ -1265,10 +1298,58 @@ const DashboardSection = ({ data }) => {
           </ResponsiveContainer>
         </Card>
       </div>}
-      <Card><SectionTitle>💰 이달 수입/지출 ({ymLabel(thisYM)})</SectionTitle>
-        {thisActual?<div className="grid grid-cols-3 gap-3 text-center">{[["수입",tInc,"text-blue-600"],["지출",tExp,"text-red-500"],["순저축",tInc-tExp,(tInc-tExp)>=0?"text-green-600":"text-red-500"]].map(([l,v,c])=><div key={l} className="p-3 rounded-xl bg-gray-50"><p className="text-xs text-gray-400 mb-1">{l}</p><p className={`text-base font-bold ${c}`}>{fmtShort(v)}</p></div>)}</div>
-        :<p className="text-sm text-gray-400 text-center py-4">이달 실적이 아직 입력되지 않았습니다</p>}
-      </Card>
+      {(() => {
+        const thisYear = String(new Date().getFullYear());
+        const yearActuals = data.monthlyActuals.filter(a=>a.yearMonth?.startsWith?.(thisYear));
+        // 올해 누적 실적
+        const ytdInc = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category==="regular_income"||i.category==="irregular_income").reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+        const ytdRegExp = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+        const ytdIrregExp = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category==="irregular").reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+        const ytdExp = ytdRegExp + ytdIrregExp;
+        // 이달 계획 (활성 계획 기준)
+        const activePlan = data.incomeExpensePlans.find(p=>p.isActive)||data.incomeExpensePlans.slice(-1)[0];
+        const planInc = activePlan ? activePlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0) : 0;
+        const planExp = activePlan ? activePlan.items.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+i.amount,0) : 0;
+        return (
+          <Card>
+            <div className="flex items-center justify-between mb-3">
+              <SectionTitle>💰 수입/지출</SectionTitle>
+            </div>
+            {/* 이달 */}
+            <p className="text-xs font-bold text-gray-400 mb-2">📅 이달 ({ymLabel(thisYM)})</p>
+            {thisActual ? (
+              <div className="grid grid-cols-3 gap-2 text-center mb-4">
+                {[["수입",tInc,planInc,"text-blue-600"],["정기지출",tExp,planExp,"text-red-500"],["순저축",tInc-tExp,planInc-planExp,(tInc-tExp)>=0?"text-green-600":"text-red-500"]].map(([l,v,p,c])=>(
+                  <div key={l} className="p-2 rounded-xl bg-gray-50">
+                    <p className="text-xs text-gray-400 mb-0.5">{l}</p>
+                    <p className={`text-sm font-bold ${c}`}>{fmtShort(v)}</p>
+                    {p!=null&&<p className="text-xs text-gray-300">계획 {fmtShort(p)}</p>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-2 text-center mb-4">
+                {[["수입","미입력",planInc,"text-gray-400"],["정기지출","미입력",planExp,"text-gray-400"],["순저축","미입력",planInc-planExp,"text-gray-400"]].map(([l,v,p,c])=>(
+                  <div key={l} className="p-2 rounded-xl bg-gray-50">
+                    <p className="text-xs text-gray-400 mb-0.5">{l}</p>
+                    <p className="text-xs text-gray-300 py-1">{v}</p>
+                    {p!=null&&<p className="text-xs text-gray-400 font-semibold">계획 {fmtShort(p)}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* 올해 누적 */}
+            {yearActuals.length>0&&<>
+              <p className="text-xs font-bold text-gray-400 mb-2">📊 올해 누적 ({thisYear}, {yearActuals.length}개월)</p>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="p-2 rounded-xl bg-blue-50"><p className="text-xs text-gray-400 mb-0.5">수입</p><p className="text-sm font-bold text-blue-600">{fmtShort(ytdInc)}</p></div>
+                <div className="p-2 rounded-xl bg-red-50"><p className="text-xs text-gray-400 mb-0.5">지출</p><p className="text-sm font-bold text-red-500">{fmtShort(ytdExp)}</p><p className="text-xs text-gray-300">비정기 {fmtShort(ytdIrregExp)}</p></div>
+                <div className={`p-2 rounded-xl ${ytdInc-ytdExp>=0?"bg-green-50":"bg-red-50"}`}><p className="text-xs text-gray-400 mb-0.5">순저축</p><p className={`text-sm font-bold ${ytdInc-ytdExp>=0?"text-green-600":"text-red-500"}`}>{fmtShort(ytdInc-ytdExp)}</p></div>
+              </div>
+            </>}
+          </Card>
+        );
+      })()}
       {snapChart.length>=1&&<Card>
         <SectionTitle>📈 자산 추이</SectionTitle>
         {snapChart.length>=2&&<ResponsiveContainer width="100%" height={200}>
@@ -1299,6 +1380,55 @@ const DashboardSection = ({ data }) => {
           </table>
         </div>
       </Card>}
+      {/* 연간 계획 vs 실적 */}
+      {(() => {
+        const thisYear = String(new Date().getFullYear());
+        const activePlan = data.incomeExpensePlans.find(p=>p.isActive) || data.incomeExpensePlans.slice(-1)[0];
+        const yearActuals = data.monthlyActuals.filter(a=>a.yearMonth?.startsWith?.(thisYear));
+        if (!activePlan) return null;
+        // 계획
+        // 정기*12 + 비정기 그대로
+        const planCatRows = [...REGULAR_EXPENSE_CATS, ...IRREGULAR_EXPENSE_CATS].map(cat => ({
+          cat,
+          plan: activePlan.items.filter(i=>i.category===cat.value).reduce((s,i)=>s+i.amount,0) * (cat.value==="irregular" ? 1 : 12),
+          actual: yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category===cat.value).reduce((s,i)=>s+(Number(i.actualAmount)||0),0)
+        })).filter(r=>r.plan>0||r.actual>0);
+        const planPieData = planCatRows.map(r=>({name:r.cat.label,value:r.plan,color:r.cat.color})).filter(d=>d.value>0);
+        const actPieData = planCatRows.map(r=>({name:r.cat.label,value:r.actual,color:r.cat.color})).filter(d=>d.value>0);
+        const planRegInc2 = activePlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0)*12;
+        const planIrregInc2 = activePlan.items.filter(i=>i.category==="irregular_income").reduce((s,i)=>s+i.amount,0);
+        const planInc = planRegInc2 + planIrregInc2;
+        const actInc = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category==="regular_income"||i.category==="irregular_income").reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+        return (
+          <Card>
+            <SectionTitle>📊 {thisYear}년 계획 vs 실적</SectionTitle>
+            {/* 수입 비교 */}
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              <div className="p-2 rounded-xl bg-blue-50 text-center"><p className="text-xs text-gray-400">연간 계획 수입</p><p className="text-sm font-bold text-blue-400">{fmtShort(planInc)}</p></div>
+              <div className="p-2 rounded-xl bg-blue-50 text-center"><p className="text-xs text-gray-400">실적 수입 ({yearActuals.length}개월)</p><p className="text-sm font-bold text-blue-600">{fmtShort(actInc)}</p></div>
+            </div>
+            {/* 계획 도넛(왼) vs 실적 도넛(오) */}
+            {(planPieData.length>0||actPieData.length>0)&&<div className="grid grid-cols-2 gap-1">
+              <div><p className="text-xs text-center text-gray-400 mb-1">계획 지출</p>
+                <ResponsiveContainer width="100%" height={140}><PieChart><Pie data={planPieData} cx="50%" cy="50%" outerRadius={50} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={9}>{planPieData.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart></ResponsiveContainer>
+              </div>
+              <div><p className="text-xs text-center text-gray-400 mb-1">실적 지출</p>
+                <ResponsiveContainer width="100%" height={140}><PieChart><Pie data={actPieData} cx="50%" cy="50%" outerRadius={50} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={9}>{actPieData.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart></ResponsiveContainer>
+              </div>
+            </div>}
+            {/* 카테고리별 표 */}
+            <div className="mt-3 space-y-1">{planCatRows.map(({cat,plan,actual})=>(
+              <div key={cat.value} className="flex items-center text-xs px-2 py-1.5 rounded-lg bg-gray-50">
+                <div className="w-2 h-2 rounded-full mr-2 shrink-0" style={{background:cat.color}}/>
+                <span className="flex-1 text-gray-600">{cat.label}</span>
+                <span className="w-14 text-right text-gray-400">{fmtShort(plan)}</span>
+                <span className="w-4 text-center text-gray-300">→</span>
+                <span className={`w-14 text-right font-bold ${actual>plan?"text-red-500":actual<plan&&actual>0?"text-green-600":"text-gray-700"}`}>{fmtShort(actual)}</span>
+              </div>
+            ))}</div>
+          </Card>
+        );
+      })()}
       <Card><SectionTitle>📌 요약</SectionTitle><div className="grid grid-cols-2 gap-2 text-sm">{[["계좌 수",data.accounts.length+"개"],["부동산",data.realEstate.length+"건"],["대출",data.loans.length+"건"],["월 총 적립금",fmtShort(data.accounts.reduce((s,a)=>s+(a.monthlyDeposit||0),0))]].map(([l,v])=><div key={l} className="flex justify-between p-2 rounded-lg bg-gray-50"><span className="text-gray-500">{l}</span><span className="font-bold text-gray-800">{v}</span></div>)}</div></Card>
     </div>
   );
