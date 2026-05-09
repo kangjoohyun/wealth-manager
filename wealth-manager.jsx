@@ -349,10 +349,8 @@ category 규칙: 예금/입출금→cash, 국내주식/ETF→domestic_stock, 해
         <div className="space-y-4">
           <Sel label="소유자" value={visionMember} onChange={setVisionMember} options={data.members.map((m) => ({ value: m.id, label: m.name }))} />
 
-          {/* 이미지 업로드 */}
+          {/* 이미지 업로드 영역 */}
           <div>
-            {/* 이미지 업로드 영역 */}
-            <div>
               <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-2">
                 스크린샷 업로드 <span className="text-blue-500 normal-case font-normal">(여러 장 동시 선택 가능)</span>
               </label>
