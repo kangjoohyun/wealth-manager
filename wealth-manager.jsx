@@ -424,6 +424,7 @@ category 규칙: 예금/입출금→cash, 국내주식/ETF→domestic_stock, 해
             </div>
           )}
         </div>
+        </div>
       </Modal>
 
       <Confirm open={!!cd} message="이 구성원을 삭제하시겠습니까?" onConfirm={() => { setData((d) => ({ ...d, members: d.members.filter((m) => m.id !== cd) })); setCd(null); }} onCancel={() => setCd(null)} />
