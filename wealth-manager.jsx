@@ -1470,15 +1470,30 @@ const DashboardSection = ({ data }) => {
         // 컬럼 정의: 수입 / 고정지출 / 생활비 / 저축 / 연금
         const COLS = [
           {key:"income", label:"수입", cats:["regular_income"], color:"#4F86C6"},
+          {key:"irreg_inc", label:"비정기수입", cats:["irregular_income"], color:"#82C596", isIrreg:true},
           {key:"fixed", label:"고정지출", cats:["fixed","financial_cost"], color:"#E85D75"},
           {key:"living", label:"생활비", cats:["living"], color:"#9B6FD4"},
           {key:"savings", label:"저축", cats:["savings"], color:"#82C596"},
           {key:"pension", label:"연금", cats:["pension_exp"], color:"#E8A87C"},
+          {key:"net", label:"순저축", cats:[], color:"#1a2744", isCalc:true},
         ];
         const getPlan = (cats) => cats.reduce((s,c)=>s+activePlan.items.filter(i=>i.category===c).reduce((ss,i)=>ss+i.amount,0),0);
         const getActual = (a, cats) => {
           if(!a) return null;
           return [...a.items,...(a.extraItems||[])].filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+        };
+        const getColVal = (a, col, isFuture, isEntered) => {
+          if(col.isCalc) {
+            // 순저축 = 수입 - 고정지출 - 생활비 - 저축 - 연금
+            const inc = isEntered ? getActual(a,["regular_income"]) : isFuture ? null : getPlan(["regular_income"]);
+            const exp = isEntered ? getActual(a,["fixed","financial_cost","living","savings","pension_exp"]) : isFuture ? null : getPlan(["fixed","financial_cost","living","savings","pension_exp"]);
+            return (inc!=null && exp!=null) ? inc - exp : null;
+          }
+          if(col.isIrreg) {
+            // 비정기수입: 실적 입력된 달만 표시, 미입력/미래는 -
+            return isEntered ? getActual(a, col.cats) : null;
+          }
+          return isEntered ? getActual(a,col.cats) : isFuture ? null : getPlan(col.cats);
         };
         const months = Array.from({length:12},(_,i)=>`${thisYear}-${String(i+1).padStart(2,"0")}`);
         const now = thisYearMonth();
@@ -1486,15 +1501,27 @@ const DashboardSection = ({ data }) => {
           <Card>
             <SectionTitle>💰 수입/지출 현황</SectionTitle>
             <div className="overflow-x-auto -mx-2">
-              <table className="w-full text-xs min-w-[340px]">
+              <table className="w-full text-xs min-w-[420px]">
                 <thead>
                   <tr className="border-b border-gray-100">
-                    <th className="text-left py-2 pl-2 text-gray-400 font-semibold w-12">월</th>
-                    {COLS.map(c=><th key={c.key} className="text-right py-2 pr-2 font-semibold" style={{color:c.color}}>{c.label}</th>)}
+                    <th className="text-left py-2 pl-2 text-gray-400 font-semibold w-10">월</th>
+                    {COLS.map(c=><th key={c.key} className="text-right py-2 pr-1.5 font-semibold whitespace-nowrap" style={{color:c.color}}>{c.label}</th>)}
                   </tr>
                   <tr className="border-b-2 border-gray-200 bg-gray-50">
                     <td className="py-1.5 pl-2 text-gray-400 font-bold">계획</td>
-                    {COLS.map(c=><td key={c.key} className="py-1.5 pr-2 text-right font-bold text-gray-500">{fmtShort(getPlan(c.cats))}</td>)}
+                    {COLS.map(c=>{
+                      let planVal;
+                      if(c.isCalc) {
+                        const inc = getPlan(["regular_income"]);
+                        const exp = getPlan(["fixed","financial_cost","living","savings","pension_exp"]);
+                        planVal = inc - exp;
+                      } else if(c.isIrreg) {
+                        planVal = getPlan(c.cats); // 비정기수입 계획 합계
+                      } else {
+                        planVal = getPlan(c.cats);
+                      }
+                      return <td key={c.key} className={`py-1.5 pr-1.5 text-right font-bold ${c.isCalc?(planVal>=0?"text-green-600":"text-red-500"):"text-gray-500"}`}>{fmtShort(planVal)}</td>;
+                    })}
                   </tr>
                 </thead>
                 <tbody>
@@ -1506,11 +1533,12 @@ const DashboardSection = ({ data }) => {
                       <tr key={ym} className={`border-b border-gray-50 ${isFuture?"opacity-30":isEntered?"":"opacity-50"}`}>
                         <td className="py-1.5 pl-2 font-semibold text-gray-600">{ym.slice(5)}월</td>
                         {COLS.map(c=>{
-                          const val = isEntered ? getActual(a,c.cats) : isFuture ? null : getPlan(c.cats);
-                          const plan = getPlan(c.cats);
-                          const isOver = val!=null && c.key!=="income" && c.key!=="savings" && c.key!=="pension" && val>plan;
+                          const val = getColVal(a, c, isFuture, isEntered);
+                          const plan = c.isCalc ? getPlan(["regular_income"])-getPlan(["fixed","financial_cost","living","savings","pension_exp"]) : getPlan(c.cats);
+                          const isOver = val!=null && !c.isIrreg && c.key!=="income" && c.key!=="savings" && c.key!=="pension" && !c.isCalc && val>plan;
                           const isUnder = val!=null && (c.key==="savings"||c.key==="pension") && val<plan;
-                          return <td key={c.key} className={`py-1.5 pr-2 text-right font-semibold ${isFuture?"text-gray-300":isEntered?(isOver?"text-red-500":isUnder?"text-orange-400":"text-gray-700"):"text-gray-300 italic"}`}>
+                          const netColor = c.isCalc && val!=null ? (val>=0?"text-green-600":"text-red-500") : "";
+                          return <td key={c.key} className={`py-1.5 pr-1.5 text-right font-semibold ${netColor||( isFuture?"text-gray-300":isEntered?(isOver?"text-red-500":isUnder?"text-orange-400":"text-gray-700"):"text-gray-300 italic")}`}>
                             {val!=null?fmtShort(val):"-"}
                           </td>;
                         })}
@@ -1522,8 +1550,16 @@ const DashboardSection = ({ data }) => {
                   <tr className="border-t-2 border-gray-200 bg-gray-50">
                     <td className="py-1.5 pl-2 text-gray-500 font-bold">누적</td>
                     {COLS.map(c=>{
-                      const tot = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>c.cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
-                      return <td key={c.key} className="py-1.5 pr-2 text-right font-bold" style={{color:c.color}}>{tot>0?fmtShort(tot):"-"}</td>;
+                      let tot;
+                      if(c.isCalc) {
+                        const incTot = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>["regular_income"].includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+                        const expTot = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>["fixed","financial_cost","living","savings","pension_exp"].includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+                        tot = incTot - expTot;
+                      } else {
+                        tot = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>c.cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+                      }
+                      const netColor = c.isCalc ? (tot>=0?"text-green-600":"text-red-500") : "";
+                      return <td key={c.key} className={`py-1.5 pr-1.5 text-right font-bold ${netColor}`} style={!netColor?{color:c.color}:{}}>{tot!==0?fmtShort(tot):"-"}</td>;
                     })}
                   </tr>
                 </tfoot>
