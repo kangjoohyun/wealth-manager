@@ -788,19 +788,34 @@ const IncomeExpenseSection = ({ data, setData }) => {
     }));
   };
 
+  const IRREG_CATS = new Set(["irregular_income", "irregular"]);
+
   const initActual = (ym) => {
     const ex = data.monthlyActuals.find((a) => a.yearMonth === ym);
-    const irregIds = new Set(getIrregularCats(data).map(c=>c.id));
-    if (ex) { const eds={}; ex.items.forEach((i)=>{eds[i.planItemId]=i.actualAmount;}); setAEdits(eds); setExtras(ex.extraItems||[]); }
-    else if (activePlan) {
+    if (ex) {
+      const eds={};
+      ex.items.forEach((i)=>{eds[i.planItemId]=i.actualAmount;});
+      setAEdits(eds); setExtras(ex.extraItems||[]);
+    } else if (activePlan) {
       const eds={};
       activePlan.items.forEach((i)=>{
-        // 비정기는 기본값 0, 정기는 계획값
-        eds[i.id] = irregIds.has(i.category) ? 0 : i.amount;
+        // 비정기(irregular_income, irregular)는 0, 정기는 계획값
+        eds[i.id] = IRREG_CATS.has(i.category) ? 0 : i.amount;
       });
       setAEdits(eds); setExtras([]);
+    } else {
+      setAEdits({}); setExtras([]);
     }
-    else { setAEdits({}); setExtras([]); }
+  };
+
+  // 항목이 다른 달 실적에 이미 0 초과로 저장됐는지 확인
+  const getItemReceivedMonth = (itemId) => {
+    for (const actual of data.monthlyActuals) {
+      if (actual.yearMonth === aYM) continue; // 현재 달 제외
+      const found = actual.items.find(i => i.planItemId === itemId && Number(i.actualAmount) > 0);
+      if (found) return { ym: actual.yearMonth, amount: found.actualAmount };
+    }
+    return null;
   };
 
   const saveActual = () => {
@@ -954,12 +969,72 @@ const IncomeExpenseSection = ({ data, setData }) => {
               </div>
             ) : null;
           })()}
-          <div className="border-t border-gray-100 pt-3 space-y-1">
-            {[["정기 수입",curPlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0),"text-blue-600"],
-              ["정기 지출",curPlan.items.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+i.amount,0),"text-red-500"]
-            ].map(([l,v,c])=><div key={l} className="flex justify-between"><span className="text-sm text-gray-500">{l}</span><span className={`text-sm font-bold ${c}`}>{fmt(v)}</span></div>)}
-            <div className="flex justify-between border-t border-gray-100 pt-1"><span className="text-sm font-bold text-gray-700">월 정기 순저축</span><span className="text-sm font-bold text-green-600">{fmt(curPlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0)-curPlan.items.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+i.amount,0))}</span></div>
-          </div>
+          {(() => {
+            // 필터 적용된 항목
+            const filtItems = memberFilter==="all" ? curPlan.items
+              : memberFilter==="none" ? curPlan.items.filter(i=>!i.memberId)
+              : curPlan.items.filter(i=>i.memberId===memberFilter);
+            const filtMember = data.members.find(m=>m.id===memberFilter);
+
+            const regInc = filtItems.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0);
+            const irregInc = filtItems.filter(i=>i.category==="irregular_income").reduce((s,i)=>s+i.amount,0);
+            const regExp = filtItems.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+i.amount,0);
+            const irregExp = filtItems.filter(i=>i.category==="irregular").reduce((s,i)=>s+i.amount,0);
+            const net = regInc - regExp;
+
+            // 카테고리별 합계 (필터 적용)
+            const catSums = [...REGULAR_EXPENSE_CATS, ...IRREGULAR_EXPENSE_CATS].map(cat => ({
+              cat,
+              amount: filtItems.filter(i=>i.category===cat.value).reduce((s,i)=>s+i.amount,0)
+            })).filter(d=>d.amount>0);
+
+            return (
+              <div className="border-t border-gray-100 pt-3 space-y-2">
+                {memberFilter!=="all"&&<p className="text-xs font-bold text-gray-400 mb-1">
+                  {filtMember?<span style={{color:filtMember.color}}>● {filtMember.name}</span>:"공용"} 기준
+                </p>}
+                {/* 수입/지출/순저축 요약 */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="p-2 rounded-xl bg-blue-50 text-center">
+                    <p className="text-xs text-gray-400">정기수입</p>
+                    <p className="text-sm font-bold text-blue-600">{fmt(regInc)}</p>
+                  </div>
+                  <div className="p-2 rounded-xl bg-red-50 text-center">
+                    <p className="text-xs text-gray-400">정기지출</p>
+                    <p className="text-sm font-bold text-red-500">{fmt(regExp)}</p>
+                  </div>
+                  <div className={`p-2 rounded-xl text-center ${net>=0?"bg-green-50":"bg-red-50"}`}>
+                    <p className="text-xs text-gray-400">순저축</p>
+                    <p className={`text-sm font-bold ${net>=0?"text-green-600":"text-red-500"}`}>{fmt(net)}</p>
+                  </div>
+                </div>
+                {irregInc>0&&<div className="grid grid-cols-2 gap-2">
+                  <div className="p-2 rounded-xl bg-blue-50 text-center">
+                    <p className="text-xs text-gray-400">비정기수입</p>
+                    <p className="text-sm font-bold text-blue-400">{fmt(irregInc)}</p>
+                  </div>
+                  <div className="p-2 rounded-xl bg-orange-50 text-center">
+                    <p className="text-xs text-gray-400">비정기지출</p>
+                    <p className="text-sm font-bold text-orange-500">{fmt(irregExp)}</p>
+                  </div>
+                </div>}
+                {/* 카테고리별 지출 세부 */}
+                {catSums.length>0&&<div className="mt-1 space-y-1">
+                  <p className="text-xs font-bold text-gray-400">지출 카테고리별</p>
+                  {catSums.map(({cat,amount})=>(
+                    <div key={cat.value} className="flex items-center justify-between px-2 py-1 rounded-lg bg-gray-50 text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-2 h-2 rounded-full shrink-0" style={{background:cat.color}}/>
+                        <span className="text-gray-600">{cat.label}</span>
+                        {cat.value==="irregular"&&<span className="text-orange-400">(비정기)</span>}
+                      </div>
+                      <span className="font-bold text-gray-700">{fmt(amount)}</span>
+                    </div>
+                  ))}
+                </div>}
+              </div>
+            );
+          })()}
         </Card> : <Card><div className="text-center py-8 text-gray-400"><p className="text-4xl mb-3">📋</p><p className="text-sm">버전을 먼저 생성해주세요</p></div></Card>}
       </div>}
 
@@ -1025,13 +1100,29 @@ const IncomeExpenseSection = ({ data, setData }) => {
                   <div className="flex items-center gap-2"><span className="text-xs text-gray-400">계획 {fmt(planTot)}</span><span className={`text-xs font-bold ${diff>0?(isInc?"text-green-600":"text-red-500"):diff<0?(isInc?"text-red-500":"text-green-600"):"text-gray-400"}`}>{diff>0?"+":""}{fmt(diff)}</span></div>
                 </div>
                 <div className="space-y-1">
-                  {items.map((item) => (
-                    <div key={item.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-50">
-                      <span className="text-sm text-gray-700 flex-1 min-w-0 truncate">{item.label}</span>
-                      <span className="text-xs text-gray-400 shrink-0 hidden sm:inline">계획 {fmt(item.amount)}</span>
-                      <input type="number" value={aEdits[item.id]??item.amount} onChange={(e)=>setAEdits((ed)=>({...ed,[item.id]:e.target.value}))} className="w-28 border border-orange-200 rounded-lg px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-orange-300/30 shrink-0"/>
-                    </div>
-                  ))}
+                  {items.map((item) => {
+                    // 비정기수입이면 다른 달에 받았는지 확인
+                    const isIrregInc = item.category === "irregular_income";
+                    const received = isIrregInc ? getItemReceivedMonth(item.id) : null;
+                    const isDisabled = !!received;
+                    return (
+                      <div key={item.id} className={`flex items-center gap-2 px-3 py-2 rounded-lg ${isDisabled?"bg-gray-100":"bg-orange-50"}`}>
+                        <span className={`text-sm flex-1 min-w-0 truncate ${isDisabled?"text-gray-400":"text-gray-700"}`}>{item.label}</span>
+                        {isDisabled ? (
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-xs text-gray-400">{ymLabel(received.ym)} 수령</span>
+                            <span className="text-sm font-bold text-gray-500">{fmt(received.amount)}</span>
+                            <span className="text-xs bg-gray-200 text-gray-500 px-2 py-0.5 rounded-full">완료</span>
+                          </div>
+                        ) : (
+                          <>
+                            <span className="text-xs text-gray-400 shrink-0 hidden sm:inline">계획 {fmt(item.amount)}</span>
+                            <input type="number" value={aEdits[item.id]??0} onChange={(e)=>setAEdits((ed)=>({...ed,[item.id]:e.target.value}))} className="w-28 border border-orange-200 rounded-lg px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-orange-300/30 shrink-0"/>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
                   {exts.map((r) => (
                     <div key={r.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-100">
                       <input value={r.label} onChange={(e)=>setExtras((rows)=>rows.map((x)=>x.id===r.id?{...x,label:e.target.value}:x))} placeholder="항목명" className="flex-1 border border-orange-200 rounded-lg px-2 py-1 text-sm focus:outline-none bg-white min-w-0"/>
