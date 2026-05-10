@@ -715,10 +715,8 @@ const IncomeExpenseSection = ({ data, setData }) => {
     }));
   };
 
-  // 드래그 상태
+  // PC 드래그 상태
   const dragItem = React.useRef(null);
-  const dragOverItem = React.useRef(null);
-
   const handleDragStart = (e, itemId) => {
     dragItem.current = itemId;
     e.dataTransfer.effectAllowed = "move";
@@ -727,22 +725,19 @@ const IncomeExpenseSection = ({ data, setData }) => {
   const handleDragEnd = (e) => {
     e.currentTarget.style.opacity = "1";
     dragItem.current = null;
-    dragOverItem.current = null;
   };
-  const handleDragOver = (e, itemId) => {
+  const handleDragOver = (e) => { e.preventDefault(); };
+  const handleDrop = (e, toItemId) => {
     e.preventDefault();
-    dragOverItem.current = itemId;
-  };
-  const handleDrop = (e, itemId) => {
-    e.preventDefault();
-    if (!curPlan || !dragItem.current || dragItem.current === itemId) return;
+    const fromId = dragItem.current;
+    if (!curPlan || !fromId || fromId === toItemId) return;
     setData((d) => ({
       ...d,
       incomeExpensePlans: d.incomeExpensePlans.map((p) => {
         if (p.id !== curPlan.id) return p;
         const items = [...p.items];
-        const fromIdx = items.findIndex(i => i.id === dragItem.current);
-        const toIdx = items.findIndex(i => i.id === itemId);
+        const fromIdx = items.findIndex(i => i.id === fromId);
+        const toIdx = items.findIndex(i => i.id === toItemId);
         if (fromIdx < 0 || toIdx < 0) return p;
         const [moved] = items.splice(fromIdx, 1);
         items.splice(toIdx, 0, moved);
@@ -750,35 +745,47 @@ const IncomeExpenseSection = ({ data, setData }) => {
       })
     }));
     dragItem.current = null;
-    dragOverItem.current = null;
   };
 
-  // 터치 드래그 (모바일)
-  const touchDragItem = React.useRef(null);
+  // 터치 드래그 (모바일) - onTouchMove로 실시간 감지
+  const touchDragId = React.useRef(null);
+  const touchDragEl = React.useRef(null);
   const handleTouchStart = (e, itemId) => {
-    touchDragItem.current = itemId;
+    touchDragId.current = itemId;
+    touchDragEl.current = e.currentTarget;
+    e.currentTarget.style.opacity = "0.5";
+    e.currentTarget.style.transform = "scale(1.02)";
   };
-  const handleTouchEnd = (e, targetItemId) => {
-    if (!curPlan || !touchDragItem.current || touchDragItem.current === targetItemId) return;
+  const handleTouchMove = (e) => {
+    e.preventDefault(); // 스크롤 막기
+  };
+  const handleTouchEnd = (e) => {
+    if (!curPlan || !touchDragId.current) return;
+    if (touchDragEl.current) {
+      touchDragEl.current.style.opacity = "1";
+      touchDragEl.current.style.transform = "";
+    }
     const touch = e.changedTouches[0];
     const el = document.elementFromPoint(touch.clientX, touch.clientY);
     const targetEl = el?.closest("[data-item-id]");
-    const overItemId = targetEl?.dataset?.itemId;
-    if (!overItemId || overItemId === touchDragItem.current) { touchDragItem.current = null; return; }
+    const toItemId = targetEl?.dataset?.itemId;
+    const fromId = touchDragId.current;
+    touchDragId.current = null;
+    touchDragEl.current = null;
+    if (!toItemId || toItemId === fromId) return;
     setData((d) => ({
       ...d,
       incomeExpensePlans: d.incomeExpensePlans.map((p) => {
         if (p.id !== curPlan.id) return p;
         const items = [...p.items];
-        const fromIdx = items.findIndex(i => i.id === touchDragItem.current);
-        const toIdx = items.findIndex(i => i.id === overItemId);
+        const fromIdx = items.findIndex(i => i.id === fromId);
+        const toIdx = items.findIndex(i => i.id === toItemId);
         if (fromIdx < 0 || toIdx < 0) return p;
         const [moved] = items.splice(fromIdx, 1);
         items.splice(toIdx, 0, moved);
         return { ...p, items };
       })
     }));
-    touchDragItem.current = null;
   };
 
   const initActual = (ym) => {
@@ -887,9 +894,9 @@ const IncomeExpenseSection = ({ data, setData }) => {
                         const mColor = data.members.find(m=>m.id===item.memberId)?.color;
                         return (
                         <div key={item.id} data-item-id={item.id}
-                          draggable onDragStart={(e)=>handleDragStart(e,item.id)} onDragEnd={handleDragEnd} onDragOver={(e)=>handleDragOver(e,item.id)} onDrop={(e)=>handleDrop(e,item.id)} onTouchStart={(e)=>handleTouchStart(e,item.id)} onTouchEnd={(e)=>handleTouchEnd(e,item.id)}
-                          className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition cursor-grab active:cursor-grabbing"
-                          style={mColor?{borderLeft:`3px solid ${mColor}`}:{}}>
+                          draggable onDragStart={(e)=>handleDragStart(e,item.id)} onDragEnd={handleDragEnd} onDragOver={handleDragOver} onDrop={(e)=>handleDrop(e,item.id)} onTouchStart={(e)=>handleTouchStart(e,item.id)} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}
+                          className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition cursor-grab active:cursor-grabbing select-none"
+                          style={mColor?{borderLeft:`3px solid ${mColor}`,touchAction:"none"}:{touchAction:"none"}}>
                           <div className="text-gray-300 mr-2 shrink-0 select-none">⠿</div>
                           <div className="flex-1 min-w-0 flex items-center gap-2">
                             {mColor&&<div className="w-1.5 h-1.5 rounded-full shrink-0" style={{background:mColor}}/>}
