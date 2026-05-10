@@ -1501,15 +1501,29 @@ const DashboardSection = ({ data }) => {
               </div>
             </div>}
             {/* 카테고리별 표 */}
-            <div className="mt-3 space-y-1">{planCatRows.map(({cat,plan,actual})=>(
-              <div key={cat.value} className="flex items-center text-xs px-2 py-1.5 rounded-lg bg-gray-50">
-                <div className="w-2 h-2 rounded-full mr-2 shrink-0" style={{background:cat.color}}/>
-                <span className="flex-1 text-gray-600">{cat.label}</span>
-                <span className="w-14 text-right text-gray-400">{fmtShort(plan)}</span>
-                <span className="w-4 text-center text-gray-300">→</span>
-                <span className={`w-14 text-right font-bold ${actual>plan?"text-red-500":actual<plan&&actual>0?"text-green-600":"text-gray-700"}`}>{fmtShort(actual)}</span>
-              </div>
-            ))}</div>
+            {(() => {
+              const nMonths = yearActuals.length;
+              const remainMonths = 12 - nMonths;
+              return (
+                <div className="mt-3 space-y-1">{planCatRows.map(({cat,plan,actual})=>{
+                  // 프로젝션: 실적 + 남은달 * 월계획
+                  const monthlyPlan = activePlan.items.filter(i=>i.category===cat.value).reduce((s,i)=>s+i.amount,0);
+                  const isIrreg = cat.value==="irregular";
+                  const proj = isIrreg ? (actual>0?actual:plan) : actual + monthlyPlan*remainMonths;
+                  const diff = actual>plan?"text-red-500":actual<plan&&actual>0?"text-green-600":"text-gray-700";
+                  return (
+                    <div key={cat.value} className="flex items-center text-xs px-2 py-1.5 rounded-lg bg-gray-50">
+                      <div className="w-2 h-2 rounded-full mr-2 shrink-0" style={{background:cat.color}}/>
+                      <span className="flex-1 text-gray-600">{cat.label}</span>
+                      <span className="w-14 text-right text-gray-400">{fmtShort(plan)}</span>
+                      <span className="w-4 text-center text-gray-300">→</span>
+                      <span className={`font-bold ${diff}`}>{fmtShort(actual)}</span>
+                      {nMonths>0&&nMonths<12&&<span className="text-gray-300 ml-1">({fmtShort(proj)})</span>}
+                    </div>
+                  );
+                })}</div>
+              );
+            })()}
           </Card>
         );
       })()}
