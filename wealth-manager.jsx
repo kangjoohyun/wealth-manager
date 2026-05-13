@@ -1380,14 +1380,14 @@ const IncomeExpenseSection = ({ data, setData }) => {
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <p className="text-xs font-bold text-center text-gray-400 mb-2">계획</p>
-                    <ResponsiveContainer width="100%" height={160}>
-                      <PieChart><Pie data={planCatData} cx="50%" cy="50%" outerRadius={55} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={9}>{planCatData.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart>
+                    <ResponsiveContainer width="100%" height={170}>
+                      <PieChart><Pie data={planCatData} cx="50%" cy="50%" outerRadius={58} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={true} fontSize={12} fontWeight="bold" fill="#333">{planCatData.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart>
                     </ResponsiveContainer>
                   </div>
                   <div>
                     <p className="text-xs font-bold text-center text-gray-400 mb-2">실적</p>
-                    <ResponsiveContainer width="100%" height={160}>
-                      <PieChart><Pie data={actCatData} cx="50%" cy="50%" outerRadius={55} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={9}>{actCatData.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart>
+                    <ResponsiveContainer width="100%" height={170}>
+                      <PieChart><Pie data={actCatData} cx="50%" cy="50%" outerRadius={58} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={true} fontSize={12} fontWeight="bold" fill="#333">{actCatData.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
@@ -1696,17 +1696,28 @@ const DashboardSection = ({ data }) => {
         if (!activePlan) return null;
         // 계획
         // 정기*12 + 비정기 그대로
-        const planCatRows = [...REGULAR_EXPENSE_CATS, ...IRREGULAR_EXPENSE_CATS].map(cat => ({
-          cat,
-          plan: activePlan.items.filter(i=>i.category===cat.value).reduce((s,i)=>s+i.amount,0) * (cat.value==="irregular" ? 1 : 12),
-          actual: yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category===cat.value).reduce((s,i)=>s+(Number(i.actualAmount)||0),0)
-        })).filter(r=>r.plan>0||r.actual>0);
+        // 대시보드용 실적 집계 헬퍼 (items:actualAmount만 / extraItems:actualAmount||amount)
+        const gaDash = (cats) => yearActuals.reduce((total, a) => {
+          const fromItems = a.items.filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+          const fromExtras = (a.extraItems||[]).filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
+          return total + fromItems + fromExtras;
+        }, 0);
+        const nMonthsDash = yearActuals.length;
+        const remainMonthsDash = 12 - nMonthsDash;
+        const planCatRows = [...REGULAR_EXPENSE_CATS, ...IRREGULAR_EXPENSE_CATS].map(cat => {
+          const plan = activePlan.items.filter(i=>i.category===cat.value).reduce((s,i)=>s+i.amount,0) * (cat.value==="irregular" ? 1 : 12);
+          const actual = gaDash([cat.value]);
+          const planMonthly = activePlan.items.filter(i=>i.category===cat.value).reduce((s,i)=>s+i.amount,0);
+          const isIrreg = cat.value==="irregular";
+          const proj = isIrreg ? (actual>0?actual:plan) : actual + planMonthly*remainMonthsDash;
+          return { cat, plan, actual, proj };
+        }).filter(r=>r.plan>0||r.actual>0);
         const planPieData = planCatRows.map(r=>({name:r.cat.label,value:r.plan,color:r.cat.color})).filter(d=>d.value>0);
         const actPieData = planCatRows.map(r=>({name:r.cat.label,value:r.actual,color:r.cat.color})).filter(d=>d.value>0);
         const planRegInc2 = activePlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0)*12;
         const planIrregInc2 = activePlan.items.filter(i=>i.category==="irregular_income").reduce((s,i)=>s+i.amount,0);
         const planInc = planRegInc2 + planIrregInc2;
-        const actInc = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category==="regular_income"||i.category==="irregular_income").reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+        const actInc = gaDash(["regular_income","irregular_income"]);
         return (
           <Card>
             <SectionTitle>📊 {thisYear}년 계획 vs 실적</SectionTitle>
@@ -1718,10 +1729,10 @@ const DashboardSection = ({ data }) => {
             {/* 계획 도넛(왼) vs 실적 도넛(오) */}
             {(planPieData.length>0||actPieData.length>0)&&<div className="grid grid-cols-2 gap-1">
               <div><p className="text-xs text-center text-gray-400 mb-1">계획 지출</p>
-                <ResponsiveContainer width="100%" height={140}><PieChart><Pie data={planPieData} cx="50%" cy="50%" outerRadius={50} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={9}>{planPieData.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart></ResponsiveContainer>
+                <ResponsiveContainer width="100%" height={150}><PieChart><Pie data={planPieData} cx="50%" cy="50%" outerRadius={52} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={true} fontSize={12} fontWeight="bold" fill="#333">{planPieData.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart></ResponsiveContainer>
               </div>
               <div><p className="text-xs text-center text-gray-400 mb-1">실적 지출</p>
-                <ResponsiveContainer width="100%" height={140}><PieChart><Pie data={actPieData} cx="50%" cy="50%" outerRadius={50} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={9}>{actPieData.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart></ResponsiveContainer>
+                <ResponsiveContainer width="100%" height={150}><PieChart><Pie data={actPieData} cx="50%" cy="50%" outerRadius={52} dataKey="value" label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={true} fontSize={12} fontWeight="bold" fill="#333">{actPieData.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip formatter={(v)=>fmt(v)}/></PieChart></ResponsiveContainer>
               </div>
             </div>}
             {/* 카테고리별 표 */}
@@ -1731,10 +1742,7 @@ const DashboardSection = ({ data }) => {
               return (
                 <div className="mt-3 space-y-1">{planCatRows.map(({cat,plan,actual})=>{
                   // 프로젝션: 실적 + 남은달 * 월계획
-                  const monthlyPlan = activePlan.items.filter(i=>i.category===cat.value).reduce((s,i)=>s+i.amount,0);
-                  const isIrreg = cat.value==="irregular";
-                  // 비정기: 실적있으면 실적, 없으면 계획 / 정기: 실적 + 미입력달*월계획
-                  const proj = isIrreg ? (actual>0?actual:plan) : actual + monthlyPlan*remainMonths;
+                  const proj = r.proj;
                   const diff = actual>plan?"text-red-500":actual<plan&&actual>0?"text-green-600":"text-gray-700";
                   return (
                     <div key={cat.value} className="flex items-center text-xs px-2 py-1.5 rounded-lg bg-gray-50">
