@@ -1180,11 +1180,16 @@ const IncomeExpenseSection = ({ data, setData }) => {
               + extras.filter(r=>r.category==="irregular_income").reduce((s,r)=>s+(Number(r.amount)||0),0);
             const actRegExp = activePlan.items.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)
               + extras.filter(r=>REGULAR_EXPENSE_CATS.find(c=>c.value===r.category)).reduce((s,r)=>s+(Number(r.amount)||0),0);
+            const actRegExp_savings = activePlan.items.filter(i=>i.category==="savings").reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)
+              + extras.filter(r=>r.category==="savings").reduce((s,r)=>s+(Number(r.amount)||0),0);
+            const actRegExp_pension = activePlan.items.filter(i=>i.category==="pension_exp").reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)
+              + extras.filter(r=>r.category==="pension_exp").reduce((s,r)=>s+(Number(r.amount)||0),0);
             const actIrregExp = activePlan.items.filter(i=>i.category==="irregular").reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)
               + extras.filter(r=>r.category==="irregular").reduce((s,r)=>s+(Number(r.amount)||0),0);
             const actInc = actRegInc + actIrregInc;
             const actExp = actRegExp + actIrregExp;
-            const net = actInc - actExp;
+            // 순저축 = 수입실적 - 지출실적 + 저축 + 연금
+            const net = actInc - actExp + actRegExp_savings + actRegExp_pension;
             return <div className="border-t border-gray-100 pt-3 space-y-2">
               <div className="flex justify-between items-center">
                 <div><span className="text-sm font-semibold text-gray-700">수입 실적</span><span className="text-xs text-gray-400 ml-2">계획(정기) {fmt(planRegInc)}</span></div>
@@ -1543,17 +1548,19 @@ const DashboardSection = ({ data }) => {
         };
         const getColVal = (a, col, isFuture, isEntered) => {
           if(col.isCalc) {
-            // 순저축 = (정기수입+비정기수입) - (정기지출+비정기지출)
+            // 순저축 = 수입실적 - 지출실적 + 저축 + 연금
             if(isEntered) {
               const regInc = getActual(a,["regular_income"]);
               const irregInc = getActual(a,["irregular_income"]);
               const regExp = getActual(a,["fixed","financial_cost","living","savings","pension_exp"]);
               const irregExp = getActual(a,["irregular"]);
-              return (regInc+irregInc) - (regExp+irregExp);
+              const savings = getActual(a,["savings"]);
+              const pension = getActual(a,["pension_exp"]);
+              return (regInc+irregInc) - (regExp+irregExp) + savings + pension;
             }
             if(isFuture) return null;
-            // 계획: 정기수입 - 정기지출
-            return getPlan(["regular_income"]) - getPlan(["fixed","financial_cost","living","savings","pension_exp"]);
+            // 계획: 정기수입 - 고정지출 - 생활비 - 금융비용 (저축/연금 제외)
+            return getPlan(["regular_income"]) - getPlan(["fixed","financial_cost","living"]);
           }
           if(col.isIrreg) {
             // 비정기수입: 실적 입력된 달만 표시
@@ -1619,9 +1626,12 @@ const DashboardSection = ({ data }) => {
                     {COLS.map(c=>{
                       let tot;
                       if(c.isCalc) {
-                        const incTot = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>["regular_income","irregular_income"].includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
-                        const expTot = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>["fixed","financial_cost","living","savings","pension_exp","irregular"].includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
-                        tot = incTot - expTot;
+                        const ga = (cats) => yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
+                        const incTot = ga(["regular_income","irregular_income"]);
+                        const expTot = ga(["fixed","financial_cost","living","savings","pension_exp","irregular"]);
+                        const savingsTot = ga(["savings"]);
+                        const pensionTot = ga(["pension_exp"]);
+                        tot = incTot - expTot + savingsTot + pensionTot;
                       } else {
                         tot = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>c.cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
                       }
