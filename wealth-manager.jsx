@@ -1740,9 +1740,7 @@ const DashboardSection = ({ data }) => {
               const nMonths = yearActuals.length;
               const remainMonths = 12 - nMonths;
               return (
-                <div className="mt-3 space-y-1">{planCatRows.map(({cat,plan,actual})=>{
-                  // 프로젝션: 실적 + 남은달 * 월계획
-                  const proj = r.proj;
+                <div className="mt-3 space-y-1">{planCatRows.map(({cat,plan,actual,proj})=>{
                   const diff = actual>plan?"text-red-500":actual<plan&&actual>0?"text-green-600":"text-gray-700";
                   return (
                     <div key={cat.value} className="flex items-center text-xs px-2 py-1.5 rounded-lg bg-gray-50">
