@@ -1284,10 +1284,10 @@ const IncomeExpenseSection = ({ data, setData }) => {
               const sum = activePlan.items.filter(i=>i.category===cat.value).reduce((s,i)=>s+i.amount,0);
               return { name: cat.label, value: isIrreg ? sum : sum*12, color: cat.color };
             }).filter(d=>d.value>0) : [];
-            // 실적 카테고리별
+            // 실적 카테고리별 (비정기 포함, items:actualAmount / extraItems:actualAmount||amount)
             const actCatData = [...REGULAR_EXPENSE_CATS, ...IRREGULAR_EXPENSE_CATS].map(cat => ({
               name: cat.label, color: cat.color,
-              value: yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category===cat.value).reduce((s,i)=>s+(Number(i.actualAmount)||0),0)
+              value: gaYear([cat.value])
             })).filter(d=>d.value>0);
             // 계획 수입: 정기*12 + 비정기수입 그대로
             const planRegInc = activePlan ? activePlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0)*12 : 0;
@@ -1304,24 +1304,25 @@ const IncomeExpenseSection = ({ data, setData }) => {
             const planSavings = activePlan ? activePlan.items.filter(i=>i.category==="savings").reduce((s,i)=>s+i.amount,0)*12 + irregInc90 : 0;
             const planLiving = activePlan ? activePlan.items.filter(i=>i.category==="living").reduce((s,i)=>s+i.amount,0)*12 + irregInc10 : 0;
             // 실적 수입/지출
-            const actInc = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category==="regular_income"||i.category==="irregular_income").reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
-            const actExp = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>EXPENSE_CATEGORIES.find(c=>c.value===i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+            const actInc = gaYear(["regular_income","irregular_income"]);
+            const actExp = gaYear(["fixed","financial_cost","living","savings","pension_exp","irregular"]);
             // "이대로라면 연간" 프로젝션: 입력된 달 실적 + 나머지 달 계획
             const allMonths = Array.from({length:12},(_,i)=>`${sumYear}-${String(i+1).padStart(2,"0")}`);
             const enteredMonths = new Set(yearActuals.map(a=>a.yearMonth));
             const remainMonths = 12 - enteredMonths.size;
-            // 각 카테고리별 프로젝션
+            // 각 카테고리별 프로젝션 (입력달=실적, 미입력달=정기계획, 비정기=실적만)
             const projByCat = {};
             [...REGULAR_EXPENSE_CATS,...IRREGULAR_EXPENSE_CATS].forEach(cat=>{
-              const actVal = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>i.category===cat.value).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+              const actVal = gaYear([cat.value]); // 실적 합산 (items+extraItems 분리 처리)
               const planMonthly = activePlan ? activePlan.items.filter(i=>i.category===cat.value).reduce((s,i)=>s+i.amount,0) : 0;
               const isIrreg = cat.value==="irregular";
-              // 비정기는 실적 있으면 실적, 없으면 계획 전체
+              // 비정기: 실적 있으면 실적값 그대로, 없으면 계획값
+              // 정기: 실적 + 미입력달 * 월계획
               const proj = isIrreg ? (actVal>0?actVal:planMonthly) : actVal + planMonthly*remainMonths;
               projByCat[cat.value] = proj;
             });
-            // 수입 프로젝션
-            const actIncRegular = yearActuals.flatMap(a=>a.items).filter(i=>i.category==="regular_income").reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+            // 수입 프로젝션 (items:actualAmount만)
+            const actIncRegular = yearActuals.reduce((s,a)=>s+a.items.filter(i=>i.category==="regular_income").reduce((ss,i)=>ss+(Number(i.actualAmount)||0),0),0);
             const planMonthlyInc = activePlan ? activePlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0) : 0;
             const projInc = actIncRegular + planMonthlyInc*remainMonths + planIrregInc;
             const projSavings = projByCat["savings"]||0;
@@ -1351,7 +1352,7 @@ const IncomeExpenseSection = ({ data, setData }) => {
                   </div>
                   <div className="p-2 rounded-xl bg-green-50">
                     <p className="text-xs text-gray-400 mb-0.5">실적 저축</p>
-                    <p className="text-base font-bold text-green-600">{fmtShort(yearActuals.flatMap(a=>a.items).filter(i=>i.category==="savings").reduce((s,i)=>s+(Number(i.actualAmount)||0),0))}</p>
+                    <p className="text-base font-bold text-green-600">{fmtShort(gaYear(["savings"]))}</p>
                     <p className="text-xs text-green-300">이대로라면 {fmtShort(projSavings)}</p>
                   </div>
                 </div>
@@ -1537,14 +1538,13 @@ const DashboardSection = ({ data }) => {
           {key:"net", label:"순저축", cats:[], color:"#1a2744", isCalc:true},
         ];
         const getPlan = (cats) => cats.reduce((s,c)=>s+activePlan.items.filter(i=>i.category===c).reduce((ss,i)=>ss+i.amount,0),0);
+        // items: actualAmount만 (amount는 계획값이라 섞이면 안됨)
+        // extraItems: actualAmount || amount 둘 다 허용
         const getActual = (a, cats) => {
           if(!a) return null;
-          return [...a.items,...(a.extraItems||[])].filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
-        };
-        // 비정기는 0 입력된 항목 제외 (입력된 달만)
-        const getActualIrreg = (a, cats) => {
-          if(!a) return 0;
-          return [...a.items,...(a.extraItems||[])].filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
+          const fromItems = a.items.filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+          const fromExtras = (a.extraItems||[]).filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
+          return fromItems + fromExtras;
         };
         const getColVal = (a, col, isFuture, isEntered) => {
           if(col.isCalc) {
@@ -1624,16 +1624,24 @@ const DashboardSection = ({ data }) => {
                   <tr className="border-t-2 border-gray-200 bg-gray-50">
                     <td className="py-1.5 pl-2 text-gray-500 font-bold">누적</td>
                     {COLS.map(c=>{
+                      // items: actualAmount만 / extraItems: actualAmount||amount
+                      const ga = (cats) => yearActuals.reduce((total, a) => {
+                        const fromItems = a.items.filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+                        const fromExtras = (a.extraItems||[]).filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
+                        return total + fromItems + fromExtras;
+                      }, 0);
                       let tot;
                       if(c.isCalc) {
-                        const ga = (cats) => yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
                         const incTot = ga(["regular_income","irregular_income"]);
                         const expTot = ga(["fixed","financial_cost","living","savings","pension_exp","irregular"]);
                         const savingsTot = ga(["savings"]);
                         const pensionTot = ga(["pension_exp"]);
                         tot = incTot - expTot + savingsTot + pensionTot;
+                      } else if(c.isIrreg) {
+                        // 비정기수입 누적: 실제 입력된 값만
+                        tot = ga(c.cats);
                       } else {
-                        tot = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>c.cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+                        tot = ga(c.cats);
                       }
                       const netColor = c.isCalc ? (tot>=0?"text-green-600":"text-red-500") : "";
                       return <td key={c.key} className={`py-1.5 pr-1.5 text-right font-bold ${netColor}`} style={!netColor?{color:c.color}:{}}>{tot!==0?fmtShort(tot):"-"}</td>;
@@ -1720,6 +1728,7 @@ const DashboardSection = ({ data }) => {
                   // 프로젝션: 실적 + 남은달 * 월계획
                   const monthlyPlan = activePlan.items.filter(i=>i.category===cat.value).reduce((s,i)=>s+i.amount,0);
                   const isIrreg = cat.value==="irregular";
+                  // 비정기: 실적있으면 실적, 없으면 계획 / 정기: 실적 + 미입력달*월계획
                   const proj = isIrreg ? (actual>0?actual:plan) : actual + monthlyPlan*remainMonths;
                   const diff = actual>plan?"text-red-500":actual<plan&&actual>0?"text-green-600":"text-gray-700";
                   return (
