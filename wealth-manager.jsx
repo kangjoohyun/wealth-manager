@@ -1170,14 +1170,34 @@ const IncomeExpenseSection = ({ data, setData }) => {
             );
           })}
           {(() => {
-            const totIncPlan=activePlan.items.filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+i.amount,0);
-            const totIncAct=activePlan.items.filter((i)=>INCOME_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)+extras.filter((r)=>INCOME_CATEGORIES.find((c)=>c.value===r.category)).reduce((s,r)=>s+(Number(r.amount)||0),0);
-            const totExpPlan=activePlan.items.filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+i.amount,0);
-            const totExpAct=activePlan.items.filter((i)=>EXPENSE_CATEGORIES.find((c)=>c.value===i.category)).reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)+extras.filter((r)=>EXPENSE_CATEGORIES.find((c)=>c.value===r.category)).reduce((s,r)=>s+(Number(r.amount)||0),0);
-            return <div className="border-t border-gray-100 pt-3 space-y-1">
-              {[["수입 실적",totIncAct,"text-blue-600",`계획 ${fmt(totIncPlan)}`],["지출 실적",totExpAct,"text-red-500",`계획 ${fmt(totExpPlan)}`],["순저축",totIncAct-totExpAct,"text-green-600",""]].map(([l,v,c,sub])=>(
-                <div key={l} className="flex justify-between items-center"><div><span className="text-sm font-semibold text-gray-700">{l}</span>{sub&&<span className="text-xs text-gray-400 ml-2">{sub}</span>}</div><span className={`text-sm font-bold ${c}`}>{fmt(v)}</span></div>
-              ))}
+            // 계획: 정기만
+            const planRegInc = activePlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+i.amount,0);
+            const planRegExp = activePlan.items.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+i.amount,0);
+            // 실적: 정기 + 이번달 비정기 입력값
+            const actRegInc = activePlan.items.filter(i=>i.category==="regular_income").reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)
+              + extras.filter(r=>r.category==="regular_income").reduce((s,r)=>s+(Number(r.amount)||0),0);
+            const actIrregInc = activePlan.items.filter(i=>i.category==="irregular_income").reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)
+              + extras.filter(r=>r.category==="irregular_income").reduce((s,r)=>s+(Number(r.amount)||0),0);
+            const actRegExp = activePlan.items.filter(i=>REGULAR_EXPENSE_CATS.find(c=>c.value===i.category)).reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)
+              + extras.filter(r=>REGULAR_EXPENSE_CATS.find(c=>c.value===r.category)).reduce((s,r)=>s+(Number(r.amount)||0),0);
+            const actIrregExp = activePlan.items.filter(i=>i.category==="irregular").reduce((s,i)=>s+(Number(aEdits[i.id])||0),0)
+              + extras.filter(r=>r.category==="irregular").reduce((s,r)=>s+(Number(r.amount)||0),0);
+            const actInc = actRegInc + actIrregInc;
+            const actExp = actRegExp + actIrregExp;
+            const net = actInc - actExp;
+            return <div className="border-t border-gray-100 pt-3 space-y-2">
+              <div className="flex justify-between items-center">
+                <div><span className="text-sm font-semibold text-gray-700">수입 실적</span><span className="text-xs text-gray-400 ml-2">계획(정기) {fmt(planRegInc)}</span></div>
+                <div className="text-right"><span className="text-sm font-bold text-blue-600">{fmt(actInc)}</span>{actIrregInc>0&&<span className="text-xs text-blue-400 ml-1">(비정기 {fmt(actIrregInc)} 포함)</span>}</div>
+              </div>
+              <div className="flex justify-between items-center">
+                <div><span className="text-sm font-semibold text-gray-700">지출 실적</span><span className="text-xs text-gray-400 ml-2">계획(정기) {fmt(planRegExp)}</span></div>
+                <div className="text-right"><span className="text-sm font-bold text-red-500">{fmt(actExp)}</span>{actIrregExp>0&&<span className="text-xs text-red-400 ml-1">(비정기 {fmt(actIrregExp)} 포함)</span>}</div>
+              </div>
+              <div className="flex justify-between items-center border-t border-gray-100 pt-1">
+                <span className="text-sm font-bold text-gray-700">순저축</span>
+                <span className={`text-sm font-bold ${net>=0?"text-green-600":"text-red-500"}`}>{fmt(net)}</span>
+              </div>
             </div>;
           })()}
         </Card> : <Card><div className="text-center py-8 text-gray-400 text-sm">활성 계획 버전이 없습니다</div></Card>}
@@ -1516,15 +1536,27 @@ const DashboardSection = ({ data }) => {
           if(!a) return null;
           return [...a.items,...(a.extraItems||[])].filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
         };
+        // 비정기는 0 입력된 항목 제외 (입력된 달만)
+        const getActualIrreg = (a, cats) => {
+          if(!a) return 0;
+          return [...a.items,...(a.extraItems||[])].filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
+        };
         const getColVal = (a, col, isFuture, isEntered) => {
           if(col.isCalc) {
-            // 순저축 = 수입 - 고정지출 - 생활비 - 저축 - 연금
-            const inc = isEntered ? getActual(a,["regular_income"]) : isFuture ? null : getPlan(["regular_income"]);
-            const exp = isEntered ? getActual(a,["fixed","financial_cost","living","savings","pension_exp"]) : isFuture ? null : getPlan(["fixed","financial_cost","living","savings","pension_exp"]);
-            return (inc!=null && exp!=null) ? inc - exp : null;
+            // 순저축 = (정기수입+비정기수입) - (정기지출+비정기지출)
+            if(isEntered) {
+              const regInc = getActual(a,["regular_income"]);
+              const irregInc = getActual(a,["irregular_income"]);
+              const regExp = getActual(a,["fixed","financial_cost","living","savings","pension_exp"]);
+              const irregExp = getActual(a,["irregular"]);
+              return (regInc+irregInc) - (regExp+irregExp);
+            }
+            if(isFuture) return null;
+            // 계획: 정기수입 - 정기지출
+            return getPlan(["regular_income"]) - getPlan(["fixed","financial_cost","living","savings","pension_exp"]);
           }
           if(col.isIrreg) {
-            // 비정기수입: 실적 입력된 달만 표시, 미입력/미래는 -
+            // 비정기수입: 실적 입력된 달만 표시
             return isEntered ? getActual(a, col.cats) : null;
           }
           return isEntered ? getActual(a,col.cats) : isFuture ? null : getPlan(col.cats);
@@ -1546,6 +1578,7 @@ const DashboardSection = ({ data }) => {
                     {COLS.map(c=>{
                       let planVal;
                       if(c.isCalc) {
+                        // 계획 순저축: 정기수입 - 정기지출 (비정기는 별도)
                         const inc = getPlan(["regular_income"]);
                         const exp = getPlan(["fixed","financial_cost","living","savings","pension_exp"]);
                         planVal = inc - exp;
@@ -1586,8 +1619,8 @@ const DashboardSection = ({ data }) => {
                     {COLS.map(c=>{
                       let tot;
                       if(c.isCalc) {
-                        const incTot = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>["regular_income"].includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
-                        const expTot = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>["fixed","financial_cost","living","savings","pension_exp"].includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+                        const incTot = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>["regular_income","irregular_income"].includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
+                        const expTot = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>["fixed","financial_cost","living","savings","pension_exp","irregular"].includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
                         tot = incTot - expTot;
                       } else {
                         tot = yearActuals.flatMap(a=>[...a.items,...(a.extraItems||[])]).filter(i=>c.cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
