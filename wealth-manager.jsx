@@ -660,9 +660,35 @@ const AssetsSection = ({ data, setData }) => {
           </div>
         ))}{!data.loans.length&&<p className="text-sm text-gray-400 text-center py-6">등록된 대출이 없습니다</p>}</div>
       </Card>}
-      <Modal open={am} onClose={()=>setAm(false)} title={ea?"계좌 수정":"계좌 추가"}><div className="space-y-3"><Sel label="소유자" value={af.memberId} onChange={(v)=>setAf((f)=>({...f,memberId:v}))} options={data.members.map((m)=>({value:m.id,label:m.name}))}/><Sel label="카테고리" value={af.category} onChange={(v)=>setAf((f)=>({...f,category:v}))} options={ACCOUNT_CATEGORIES}/><Inp label="은행/증권사" value={af.bank} onChange={(v)=>setAf((f)=>({...f,bank:v}))} required/><Inp label="계좌번호" value={af.accountNumber} onChange={(v)=>setAf((f)=>({...f,accountNumber:v}))}/><Inp label="설명" value={af.description} onChange={(v)=>setAf((f)=>({...f,description:v}))}/><Inp label="현재 잔액 (원)" type="number" value={af.balance} onChange={(v)=>setAf((f)=>({...f,balance:v}))}/><Inp label="월 적립금 (원)" type="number" value={af.monthlyDeposit} onChange={(v)=>setAf((f)=>({...f,monthlyDeposit:v}))}/><Inp label="메모" value={af.memo} onChange={(v)=>setAf((f)=>({...f,memo:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setAm(false)}>취소</Btn><Btn onClick={sa}>저장</Btn></div></div></Modal>
+      <Modal open={am} onClose={()=>setAm(false)} title={ea?"계좌 수정":"계좌 추가"}><div className="space-y-3">{(({memberId, onChange, members}) => {
+    const isMember = members.find(m=>m.id===memberId);
+    const isCustom = memberId && !isMember;
+    const selectVal = isMember ? memberId : isCustom ? "__cust__" : "";
+    return <div>
+      <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">소유자</label>
+      <select value={selectVal} onChange={e=>{ if(e.target.value==="__cust__") onChange(" "); else onChange(e.target.value); }} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2744]/30 bg-white">
+        <option value="">미지정</option>
+        {members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+        <option value="__cust__">직접 입력...</option>
+      </select>
+      {isCustom&&<input value={memberId.trim()} onChange={e=>onChange(e.target.value)} placeholder="이름 직접 입력" autoFocus className="mt-2 w-full border border-blue-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300/30"/>}
+    </div>;
+  })({memberId:af.memberId,onChange:(v)=>setAf(f=>({...f,memberId:v})),members:data.members})}<Sel label="카테고리" value={af.category} onChange={(v)=>setAf((f)=>({...f,category:v}))} options={ACCOUNT_CATEGORIES}/><Inp label="은행/증권사" value={af.bank} onChange={(v)=>setAf((f)=>({...f,bank:v}))} required/><Inp label="계좌번호" value={af.accountNumber} onChange={(v)=>setAf((f)=>({...f,accountNumber:v}))}/><Inp label="설명" value={af.description} onChange={(v)=>setAf((f)=>({...f,description:v}))}/><Inp label="현재 잔액 (원)" type="number" value={af.balance} onChange={(v)=>setAf((f)=>({...f,balance:v}))}/><Inp label="월 적립금 (원)" type="number" value={af.monthlyDeposit} onChange={(v)=>setAf((f)=>({...f,monthlyDeposit:v}))}/><Inp label="메모" value={af.memo} onChange={(v)=>setAf((f)=>({...f,memo:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setAm(false)}>취소</Btn><Btn onClick={sa}>저장</Btn></div></div></Modal>
       <Modal open={rm} onClose={()=>setRm(false)} title={er?"부동산 수정":"부동산 추가"}><div className="space-y-3"><Inp label="물건명" value={rf.name} onChange={(v)=>setRf((f)=>({...f,name:v}))} required/><Inp label="취득가 (원)" type="number" value={rf.purchasePrice} onChange={(v)=>setRf((f)=>({...f,purchasePrice:v}))}/><Inp label="현재 시세 (원)" type="number" value={rf.currentPrice} onChange={(v)=>setRf((f)=>({...f,currentPrice:v}))}/><Sel label="연결 대출" value={rf.loanId} onChange={(v)=>setRf((f)=>({...f,loanId:v}))} options={[{value:"",label:"없음"},...data.loans.map((l)=>({value:l.id,label:l.name}))]}/><Inp label="메모" value={rf.memo} onChange={(v)=>setRf((f)=>({...f,memo:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setRm(false)}>취소</Btn><Btn onClick={sr}>저장</Btn></div></div></Modal>
-      <Modal open={lm} onClose={()=>setLm(false)} title={el?"대출 수정":"대출 추가"}><div className="space-y-3"><Sel label="소유자" value={lf.memberId} onChange={(v)=>setLf((f)=>({...f,memberId:v}))} options={data.members.map((m)=>({value:m.id,label:m.name}))}/><Inp label="대출명" value={lf.name} onChange={(v)=>setLf((f)=>({...f,name:v}))} required/><Inp label="잔액 (원)" type="number" value={lf.balance} onChange={(v)=>setLf((f)=>({...f,balance:v}))}/><Inp label="금리 (%)" type="number" value={lf.interestRate} onChange={(v)=>setLf((f)=>({...f,interestRate:v}))}/><Inp label="월 상환액 (원)" type="number" value={lf.monthlyPayment} onChange={(v)=>setLf((f)=>({...f,monthlyPayment:v}))}/><Inp label="만기일" type="date" value={lf.dueDate} onChange={(v)=>setLf((f)=>({...f,dueDate:v}))}/><Sel label="연결 부동산" value={lf.linkedRealEstateId} onChange={(v)=>setLf((f)=>({...f,linkedRealEstateId:v}))} options={[{value:"",label:"없음"},...data.realEstate.map((r)=>({value:r.id,label:r.name}))]}/><Inp label="메모" value={lf.memo} onChange={(v)=>setLf((f)=>({...f,memo:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setLm(false)}>취소</Btn><Btn onClick={sl}>저장</Btn></div></div></Modal>
+      <Modal open={lm} onClose={()=>setLm(false)} title={el?"대출 수정":"대출 추가"}><div className="space-y-3">{(({memberId, onChange, members}) => {
+    const isMember = members.find(m=>m.id===memberId);
+    const isCustom = memberId && !isMember;
+    const selectVal = isMember ? memberId : isCustom ? "__cust__" : "";
+    return <div>
+      <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">소유자</label>
+      <select value={selectVal} onChange={e=>{ if(e.target.value==="__cust__") onChange(" "); else onChange(e.target.value); }} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2744]/30 bg-white">
+        <option value="">미지정</option>
+        {members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+        <option value="__cust__">직접 입력...</option>
+      </select>
+      {isCustom&&<input value={memberId.trim()} onChange={e=>onChange(e.target.value)} placeholder="이름 직접 입력" autoFocus className="mt-2 w-full border border-blue-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300/30"/>}
+    </div>;
+  })({memberId:lf.memberId,onChange:(v)=>setLf(f=>({...f,memberId:v})),members:data.members})}<Inp label="대출명" value={lf.name} onChange={(v)=>setLf((f)=>({...f,name:v}))} required/><Inp label="잔액 (원)" type="number" value={lf.balance} onChange={(v)=>setLf((f)=>({...f,balance:v}))}/><Inp label="금리 (%)" type="number" value={lf.interestRate} onChange={(v)=>setLf((f)=>({...f,interestRate:v}))}/><Inp label="월 상환액 (원)" type="number" value={lf.monthlyPayment} onChange={(v)=>setLf((f)=>({...f,monthlyPayment:v}))}/><Inp label="만기일" type="date" value={lf.dueDate} onChange={(v)=>setLf((f)=>({...f,dueDate:v}))}/><Sel label="연결 부동산" value={lf.linkedRealEstateId} onChange={(v)=>setLf((f)=>({...f,linkedRealEstateId:v}))} options={[{value:"",label:"없음"},...data.realEstate.map((r)=>({value:r.id,label:r.name}))]}/><Inp label="메모" value={lf.memo} onChange={(v)=>setLf((f)=>({...f,memo:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setLm(false)}>취소</Btn><Btn onClick={sl}>저장</Btn></div></div></Modal>
       <Confirm open={!!cda} message="이 계좌를 삭제하시겠습니까?" onConfirm={()=>{setData((d)=>({...d,accounts:d.accounts.filter((a)=>a.id!==cda)}));setCda(null);}} onCancel={()=>setCda(null)}/>
       <Confirm open={!!cdr} message="이 부동산을 삭제하시겠습니까?" onConfirm={()=>{setData((d)=>({...d,realEstate:d.realEstate.filter((r)=>r.id!==cdr)}));setCdr(null);}} onCancel={()=>setCdr(null)}/>
       <Confirm open={!!cdl} message="이 대출을 삭제하시겠습니까?" onConfirm={()=>{setData((d)=>({...d,loans:d.loans.filter((l)=>l.id!==cdl)}));setCdl(null);}} onCancel={()=>setCdl(null)}/>
@@ -826,8 +852,10 @@ const IncomeExpenseSection = ({ data, setData }) => {
   const saveActual = () => {
     if (!activePlan) return;
     const items = activePlan.items.map((i) => ({ planItemId:i.id, label:i.label, category:i.category, plannedAmount:i.amount, actualAmount:Number(aEdits[i.id])||0 }));
+    // extraItems에도 actualAmount 필드 보장
+    const normalizedExtras = extras.map(r => ({ ...r, actualAmount: Number(r.amount)||0 }));
     const ex = data.monthlyActuals.find((a) => a.yearMonth === aYM);
-    const na = { id:ex?.id||genId(), yearMonth:aYM, planVersionId:activePlan.id, items, extraItems:extras };
+    const na = { id:ex?.id||genId(), yearMonth:aYM, planVersionId:activePlan.id, items, extraItems:normalizedExtras };
     setData((d) => ({ ...d, monthlyActuals: ex ? d.monthlyActuals.map((a)=>a.yearMonth===aYM?na:a) : [...d.monthlyActuals,na] }));
     alert("저장되었습니다!");
   };
@@ -1486,7 +1514,7 @@ const DashboardSection = ({ data }) => {
         const getPlan = (cats) => cats.reduce((s,c)=>s+activePlan.items.filter(i=>i.category===c).reduce((ss,i)=>ss+i.amount,0),0);
         const getActual = (a, cats) => {
           if(!a) return null;
-          return [...a.items,...(a.extraItems||[])].filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+          return [...a.items,...(a.extraItems||[])].filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
         };
         const getColVal = (a, col, isFuture, isEntered) => {
           if(col.isCalc) {
@@ -2218,7 +2246,20 @@ const AccountBookSection = ({ data, setData }) => {
         <div className="space-y-2">{cards.map((c)=><div key={c.id} className="flex items-center justify-between p-3 rounded-xl bg-gray-50"><div className="flex-1"><div className="flex items-center gap-2"><span className="text-sm font-semibold text-gray-800">{c.cardName}</span>{c.description&&<span className="text-xs text-gray-500">{c.description}</span>}</div>{c.note&&<p className="text-xs text-gray-400">{c.note}</p>}</div><div className="flex items-center gap-2 ml-2 shrink-0">{c.autoDebitAmount>0&&<span className="text-sm font-bold text-gray-700">{fmt(c.autoDebitAmount)}</span>}<Btn size="sm" variant="ghost" onClick={()=>{setEditC(c);setCForm({...c});setCardModal(true);}}>수정</Btn><Btn size="sm" variant="danger" onClick={()=>setCdc(c.id)}>삭제</Btn></div></div>)}{!cards.length&&<p className="text-sm text-gray-400 text-center py-6">등록된 카드가 없습니다</p>}</div>
         {totAD>0&&<div className="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-100 flex justify-between"><span className="text-xs font-semibold text-amber-700">💳 월 자동이체 합계</span><span className="text-sm font-bold text-amber-700">{fmt(totAD)}</span></div>}
       </Card>}
-      <Modal open={modal} onClose={()=>setModal(false)} title={editE?"계좌 수정":"계좌 추가"}><div className="space-y-3"><Sel label="소유자" value={form.memberId} onChange={(v)=>setForm((f)=>({...f,memberId:v}))} options={data.members.map((m)=>({value:m.id,label:m.name}))}/><Inp label="은행/증권사" value={form.bank} onChange={(v)=>setForm((f)=>({...f,bank:v}))} required/><Inp label="계좌번호" value={form.accountNumber} onChange={(v)=>setForm((f)=>({...f,accountNumber:v}))}/><Inp label="설명" value={form.description} onChange={(v)=>setForm((f)=>({...f,description:v}))}/><Sel label="카테고리" value={form.category} onChange={(v)=>setForm((f)=>({...f,category:v}))} options={ACCOUNT_CATEGORIES}/><Inp label="비고" value={form.note} onChange={(v)=>setForm((f)=>({...f,note:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setModal(false)}>취소</Btn><Btn onClick={sv}>저장</Btn></div></div></Modal>
+      <Modal open={modal} onClose={()=>setModal(false)} title={editE?"계좌 수정":"계좌 추가"}><div className="space-y-3">{(({memberId, onChange, members}) => {
+    const isMember = members.find(m=>m.id===memberId);
+    const isCustom = memberId && !isMember;
+    const selectVal = isMember ? memberId : isCustom ? "__cust__" : "";
+    return <div>
+      <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">소유자</label>
+      <select value={selectVal} onChange={e=>{ if(e.target.value==="__cust__") onChange(" "); else onChange(e.target.value); }} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2744]/30 bg-white">
+        <option value="">미지정</option>
+        {members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+        <option value="__cust__">직접 입력...</option>
+      </select>
+      {isCustom&&<input value={memberId.trim()} onChange={e=>onChange(e.target.value)} placeholder="이름 직접 입력" autoFocus className="mt-2 w-full border border-blue-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300/30"/>}
+    </div>;
+  })({memberId:form.memberId,onChange:(v)=>setForm(f=>({...f,memberId:v})),members:data.members})}<Inp label="은행/증권사" value={form.bank} onChange={(v)=>setForm((f)=>({...f,bank:v}))} required/><Inp label="계좌번호" value={form.accountNumber} onChange={(v)=>setForm((f)=>({...f,accountNumber:v}))}/><Inp label="설명" value={form.description} onChange={(v)=>setForm((f)=>({...f,description:v}))}/><Sel label="카테고리" value={form.category} onChange={(v)=>setForm((f)=>({...f,category:v}))} options={ACCOUNT_CATEGORIES}/><Inp label="비고" value={form.note} onChange={(v)=>setForm((f)=>({...f,note:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setModal(false)}>취소</Btn><Btn onClick={sv}>저장</Btn></div></div></Modal>
       <Modal open={cardModal} onClose={()=>setCardModal(false)} title={editC?"카드 수정":"카드 추가"}><div className="space-y-3"><Sel label="소유자" value={cForm.memberId} onChange={(v)=>setCForm((f)=>({...f,memberId:v}))} options={data.members.map((m)=>({value:m.id,label:m.name}))}/><Inp label="카드명" value={cForm.cardName} onChange={(v)=>setCForm((f)=>({...f,cardName:v}))} required/><Inp label="설명" value={cForm.description} onChange={(v)=>setCForm((f)=>({...f,description:v}))}/><Inp label="월 자동이체 금액" type="number" value={cForm.autoDebitAmount} onChange={(v)=>setCForm((f)=>({...f,autoDebitAmount:v}))}/><Inp label="비고" value={cForm.note} onChange={(v)=>setCForm((f)=>({...f,note:v}))}/><div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setCardModal(false)}>취소</Btn><Btn onClick={sc}>저장</Btn></div></div></Modal>
       <Confirm open={!!cd} message="삭제하시겠습니까?" onConfirm={()=>{setData((d)=>({...d,accountBook:(d.accountBook||[]).filter((e)=>e.id!==cd)}));setCd(null);}} onCancel={()=>setCd(null)}/>
       <Confirm open={!!cdc} message="삭제하시겠습니까?" onConfirm={()=>{setData((d)=>({...d,accountBook:(d.accountBook||[]).filter((e)=>e.id!==cdc)}));setCdc(null);}} onCancel={()=>setCdc(null)}/>
