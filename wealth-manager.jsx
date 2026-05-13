@@ -1106,16 +1106,17 @@ const IncomeExpenseSection = ({ data, setData }) => {
                 </div>
                 <div className="space-y-1">
                   {items.map((item) => {
-                    // 비정기수입이면 다른 달에 받았는지 확인
-                    const isIrregInc = item.category === "irregular_income";
-                    const received = isIrregInc ? getItemReceivedMonth(item.id) : null;
+                    // 비정기수입/지출 모두 다른 달 입력 확인
+                    const isIrregCat = item.category === "irregular_income" || item.category === "irregular";
+                    const received = isIrregCat ? getItemReceivedMonth(item.id) : null;
                     const isDisabled = !!received;
+                    const isExpense = item.category === "irregular";
                     return (
                       <div key={item.id} className={`flex items-center gap-2 px-3 py-2 rounded-lg ${isDisabled?"bg-gray-100":"bg-orange-50"}`}>
                         <span className={`text-sm flex-1 min-w-0 truncate ${isDisabled?"text-gray-400":"text-gray-700"}`}>{item.label}</span>
                         {isDisabled ? (
                           <div className="flex items-center gap-2 shrink-0">
-                            <span className="text-xs text-gray-400">{ymLabel(received.ym)} 수령</span>
+                            <span className="text-xs text-gray-400">{ymLabel(received.ym)} {isExpense?"지출됨":"수령"}</span>
                             <span className="text-sm font-bold text-gray-500">{fmt(received.amount)}</span>
                             <span className="text-xs bg-gray-200 text-gray-500 px-2 py-0.5 rounded-full">완료</span>
                           </div>
@@ -1910,7 +1911,7 @@ const MumuSection = ({ data, setData }) => {
             const pStar=mumuStarPct(p.ticker,p.splits,pT);
             const pStarPrice=mumuStarPrice(p);
             return (
-              <Card key={p.id} className="cursor-pointer hover:shadow-md transition-all" onClick={()=>{setCurId(p.id);setView('detail');}}>
+              <div key={p.id} className="bg-white rounded-2xl shadow-sm p-4 cursor-pointer hover:shadow-md transition-all active:scale-[0.99]" onClick={()=>{setCurId(p.id);setView('detail');}}>
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <span className="text-base font-extrabold text-[#1a2744]">{p.ticker}</span>
@@ -1925,7 +1926,7 @@ const MumuSection = ({ data, setData }) => {
                   <div className="bg-blue-50 rounded-lg p-2"><p className="text-gray-400">★%</p><p className="font-bold text-blue-600">{pStar.toFixed(1)}%</p></div>
                   <div className="bg-amber-50 rounded-lg p-2"><p className="text-gray-400">★가격</p><p className="font-bold text-amber-600">{pAvg>0?fmtUSD(pStarPrice):'-'}</p></div>
                 </div>
-              </Card>
+              </div>
             );
           })}
         </div>}
