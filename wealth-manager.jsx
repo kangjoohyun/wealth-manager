@@ -1278,6 +1278,12 @@ const IncomeExpenseSection = ({ data, setData }) => {
           {(() => {
             const yearActuals = data.monthlyActuals.filter(a=>a.yearMonth?.startsWith?.(sumYear));
             const nMonths = yearActuals.length || 12;
+            // 실적 집계 헬퍼: items=actualAmount만 / extraItems=actualAmount||amount
+            const gaYear = (cats) => yearActuals.reduce((total, a) => {
+              const fromItems = a.items.filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||0),0);
+              const fromExtras = (a.extraItems||[]).filter(i=>cats.includes(i.category)).reduce((s,i)=>s+(Number(i.actualAmount)||Number(i.amount)||0),0);
+              return total + fromItems + fromExtras;
+            }, 0);
             // 계획: 정기 *12, 비정기는 그대로 (1회성)
             const planCatData = activePlan ? [...REGULAR_EXPENSE_CATS, ...IRREGULAR_EXPENSE_CATS].map(cat => {
               const isIrreg = cat.value === "irregular";
@@ -1307,7 +1313,6 @@ const IncomeExpenseSection = ({ data, setData }) => {
             const actInc = gaYear(["regular_income","irregular_income"]);
             const actExp = gaYear(["fixed","financial_cost","living","savings","pension_exp","irregular"]);
             // "이대로라면 연간" 프로젝션: 입력된 달 실적 + 나머지 달 계획
-            const allMonths = Array.from({length:12},(_,i)=>`${sumYear}-${String(i+1).padStart(2,"0")}`);
             const enteredMonths = new Set(yearActuals.map(a=>a.yearMonth));
             const remainMonths = 12 - enteredMonths.size;
             // 각 카테고리별 프로젝션 (입력달=실적, 미입력달=정기계획, 비정기=실적만)
