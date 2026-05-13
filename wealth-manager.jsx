@@ -808,12 +808,15 @@ const IncomeExpenseSection = ({ data, setData }) => {
     }
   };
 
-  // 항목이 다른 달 실적에 이미 0 초과로 저장됐는지 확인
+  // 항목이 다른 달 실적에 이미 0 초과로 저장됐는지 확인 (수입/지출 모두)
   const getItemReceivedMonth = (itemId) => {
     for (const actual of data.monthlyActuals) {
       if (actual.yearMonth === aYM) continue; // 현재 달 제외
       const found = actual.items.find(i => i.planItemId === itemId && Number(i.actualAmount) > 0);
       if (found) return { ym: actual.yearMonth, amount: found.actualAmount };
+      // extraItems도 확인
+      const foundExtra = (actual.extraItems||[]).find(i => i.id === itemId && Number(i.actualAmount||i.amount) > 0);
+      if (foundExtra) return { ym: actual.yearMonth, amount: foundExtra.actualAmount||foundExtra.amount };
     }
     return null;
   };
@@ -1728,9 +1731,37 @@ export default function App() {
     setDataRaw((prev) => { const next = typeof updater === "function" ? updater(prev) : updater; saveData(next); return next; });
   }, []);
 
-  // 자동 동기화: 30초마다 Sheets에서 불러오기
+  // 마지막 업로드 완료 시간
+  const lastUploadRef = React.useRef(0);
+  const UPLOAD_LOCK_MS = 60000; // 업로드 후 60초간 다운로드 차단
+
+  // 데이터 변경 → 즉시 Sheets 업로드 (디바운스 500ms)
+  const uploadTimerRef = React.useRef(null);
+  const setData2 = useCallback((updater) => {
+    setDataRaw((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      saveData(next);
+      if (uploadTimerRef.current) clearTimeout(uploadTimerRef.current);
+      uploadTimerRef.current = setTimeout(async () => {
+        setSyncStatus("syncing");
+        const ok = await syncToSheets(next);
+        if (ok) {
+          lastUploadRef.current = Date.now(); // 업로드 완료 시간 기록
+          setSyncStatus("ok");
+        } else {
+          setSyncStatus("error");
+        }
+      }, 500);
+      return next;
+    });
+  }, []);
+
+  // 자동 다운로드: 30초마다 (업로드 후 60초간 차단)
   React.useEffect(() => {
     const autoSync = async () => {
+      const now = Date.now();
+      // 최근 업로드 후 60초 이내면 다운로드 건너뜀
+      if (now - lastUploadRef.current < UPLOAD_LOCK_MS) return;
       setSyncStatus("syncing");
       try {
         const remote = await syncFromSheets();
@@ -1738,14 +1769,13 @@ export default function App() {
           const remoteStr = JSON.stringify(remote);
           const localStr = JSON.stringify(loadData());
           if (remoteStr !== localStr) {
-            setDataRaw((prev) => {
+            setDataRaw(() => {
               const merged = { ...DEFAULT_DATA, ...remote };
               saveData(merged);
               return merged;
             });
           }
           setSyncStatus("ok");
-          lastSyncRef.current = Date.now();
         } else {
           setSyncStatus("ok");
         }
@@ -1754,26 +1784,10 @@ export default function App() {
       }
     };
 
-    autoSync(); // 앱 시작시 즉시 한번
-    const interval = setInterval(autoSync, 30000); // 30초마다
-    return () => clearInterval(interval);
-  }, []);
-
-  // 데이터 변경시 자동 업로드 (1초 디바운스)
-  const uploadTimerRef = React.useRef(null);
-  const setData2 = useCallback((updater) => {
-    setDataRaw((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      saveData(next);
-      // 디바운스 업로드
-      if (uploadTimerRef.current) clearTimeout(uploadTimerRef.current);
-      uploadTimerRef.current = setTimeout(async () => {
-        setSyncStatus("syncing");
-        const ok = await syncToSheets(next);
-        setSyncStatus(ok ? "ok" : "error");
-      }, 1000);
-      return next;
-    });
+    // 앱 시작 시 딜레이 후 한번 (혹시 있을 다른 기기 변경사항 반영)
+    const initTimer = setTimeout(autoSync, 3000);
+    const interval = setInterval(autoSync, 30000);
+    return () => { clearTimeout(initTimer); clearInterval(interval); };
   }, []);
   const nav = NAV_ITEMS.find((n) => n.key === activeNav);
   return (
