@@ -1712,18 +1712,44 @@ const mumuMode = (port) => mumuCalcT(port) > port.splits-1 ? 'reverse' : 'normal
 const MumuSection = ({ data, setData }) => {
   const ports = data.mumuPorts || [];
   const cycles = data.mumuCycles || [];
-  const [curId, setCurId] = useState(ports[0]?.id || null);
-  const [tab, setTab] = useState('dashboard');
+
+  // 뷰 상태: 'list'(진행중/이력) | 'detail'(포트 상세)
+  const [view, setView] = useState('list');
+  const [mainTab, setMainTab] = useState('active'); // active | history
+  const [curId, setCurId] = useState(null);
+
+  // 포트 모달
   const [portModal, setPortModal] = useState(false);
   const [editPort, setEditPort] = useState(null);
   const [portForm, setPortForm] = useState({ticker:'SOXL',nickname:'',seed:'15000',splits:'40',targetPct:'20',fee:'0.07'});
+
+  // 거래 모달
   const [tradeModal, setTradeModal] = useState(false);
   const [tradeForm, setTradeForm] = useState({date:'',type:'매수',price:'',qty:'',tTag:'T+1',memo:''});
+
+  // 문자 파싱 모달
+  const [parseModal, setParseModal] = useState(false);
+  const [parseText, setParseText] = useState('');
+  const [parsedTrade, setParsedTrade] = useState(null);
+  const [parseTag, setParseTag] = useState('T+0.5');
+
+  // 현재가
   const [priceInput, setPriceInput] = useState('');
-  const [cycleModal, setCycleModal] = useState(false);
+
+  // T값 수동
   const [tManualMode, setTManualMode] = useState(false);
   const [tManualInput, setTManualInput] = useState('');
+
+  // 사이클 종료
+  const [cycleModal, setCycleModal] = useState(false);
+
+  // 이력 수동 추가
+  const [histModal, setHistModal] = useState(false);
+  const [histForm, setHistForm] = useState({portId:'',ticker:'',nickname:'',startDate:'',endDate:'',seed:'',splits:'40',reason:'',profitAmt:'',profitPct:''});
+
+  // 삭제 확인
   const [confirmDel, setConfirmDel] = useState(null);
+  const [confirmDelPort, setConfirmDelPort] = useState(null);
 
   const port = ports.find(p=>p.id===curId);
   const T = port ? mumuCalcT(port) : 0;
@@ -1740,7 +1766,10 @@ const MumuSection = ({ data, setData }) => {
   const evalAmt = holdings * curPrice;
   const evalPct = avg > 0 ? (curPrice/avg-1)*100 : 0;
   const portCycles = cycles.filter(c=>c.portId===curId);
+  const PHASE_LABEL = {init:'초기 매수',first:'전반전',second:'후반전',exhaust:'소진→리버스'};
+  const PHASE_COLOR = {init:'#9B6FD4',first:'#4F86C6',second:'#E8A87C',exhaust:'#E85D75'};
 
+  // 오늘의 가이드
   const getGuide = () => {
     if (!port) return {buys:[],sells:[]};
     const buys=[], sells=[];
@@ -1763,193 +1792,401 @@ const MumuSection = ({ data, setData }) => {
     return {buys,sells};
   };
   const guide = getGuide();
-  const PHASE_LABEL = {init:'초기',first:'전반전',second:'후반전',exhaust:'소진'};
-  const PHASE_COLOR = {init:'#9B6FD4',first:'#4F86C6',second:'#E8A87C',exhaust:'#E85D75'};
 
-  const openAddPort = () => { setEditPort(null); setPortForm({ticker:'SOXL',nickname:'',seed:'15000',splits:'40',targetPct:'20',fee:'0.07'}); setPortModal(true); };
-  const openEditPort = (p) => { setEditPort(p); setPortForm({ticker:p.ticker,nickname:p.nickname||'',seed:String(p.seed),splits:String(p.splits),targetPct:String(p.targetPct),fee:String(p.fee)}); setPortModal(true); };
+  // 포트 저장
   const savePort = () => {
     if (!portForm.ticker.trim()) return;
     const np = {id:editPort?.id||'mu_'+genId(),version:'v4.0',currency:'USD',ticker:portForm.ticker.toUpperCase(),nickname:portForm.nickname,seed:Number(portForm.seed),splits:Number(portForm.splits),targetPct:Number(portForm.targetPct),fee:Number(portForm.fee),trades:editPort?.trades||[],cycleNo:editPort?.cycleNo||1,lastPrice:editPort?.lastPrice||0,recentPrices:editPort?.recentPrices||[],createdAt:editPort?.createdAt||new Date().toISOString().slice(0,10)};
     setData(d=>({...d,mumuPorts:editPort?d.mumuPorts.map(p=>p.id===editPort.id?np:p):[...(d.mumuPorts||[]),np]}));
-    if (!editPort) setCurId(np.id);
+    if (!editPort) { setCurId(np.id); setView('detail'); }
     setPortModal(false);
   };
+
+  // 거래 저장
   const saveTrade = () => {
     if (!port||!tradeForm.price||!tradeForm.qty) return;
     const tr = {id:'tr'+genId(),date:tradeForm.date||new Date().toISOString().slice(0,10),type:tradeForm.type,price:Number(tradeForm.price),qty:Number(tradeForm.qty),tTag:tradeForm.tTag,memo:tradeForm.memo,amount:Math.round(Number(tradeForm.price)*Number(tradeForm.qty)*100)/100};
     setData(d=>({...d,mumuPorts:d.mumuPorts.map(p=>p.id===curId?{...p,trades:[...(p.trades||[]),tr]}:p)}));
     setTradeModal(false); setTradeForm({date:'',type:'매수',price:'',qty:'',tTag:'T+1',memo:''});
   };
+
+  // 문자 파싱
+  const parseMsgText = (text) => {
+    const lines = text.split('\n').map(l=>l.trim());
+    const get = (key) => { const l = lines.find(l=>l.startsWith(key)); return l ? l.split(':').slice(1).join(':').trim() : ''; };
+    const typeStr = get('매매구분');
+    const priceStr = get('체결단가').replace(/USD\s*/i,'').trim();
+    const qtyStr = get('체결수량').replace('주','').trim();
+    const dateStr = get('체결일자'); // MM/DD
+    const ticker = get('종목명');
+    if (!priceStr || !qtyStr) return null;
+    const type = typeStr.includes('매수') ? '매수' : '매도';
+    let date = new Date().toISOString().slice(0,10);
+    if (dateStr) {
+      const [m,d] = dateStr.split('/');
+      date = `${new Date().getFullYear()}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+    }
+    return { type, price:Number(priceStr), qty:Number(qtyStr), date, ticker };
+  };
+
+  const handleParse = () => {
+    const result = parseMsgText(parseText);
+    if (!result) { alert('파싱 실패. 문자 형식을 확인해주세요.'); return; }
+    setParsedTrade(result);
+  };
+
+  const saveParsedTrade = () => {
+    if (!port || !parsedTrade) return;
+    const tr = {id:'tr'+genId(),date:parsedTrade.date,type:parsedTrade.type,price:parsedTrade.price,qty:parsedTrade.qty,tTag:parseTag,memo:'',amount:Math.round(parsedTrade.price*parsedTrade.qty*100)/100};
+    setData(d=>({...d,mumuPorts:d.mumuPorts.map(p=>p.id===curId?{...p,trades:[...(p.trades||[]),tr]}:p)}));
+    setParseModal(false); setParseText(''); setParsedTrade(null);
+  };
+
+  // 현재가 업데이트
   const updatePrice = () => {
     if (!port||!priceInput) return;
     const price=Number(priceInput);
     setData(d=>({...d,mumuPorts:d.mumuPorts.map(p=>p.id===curId?{...p,lastPrice:price,recentPrices:[...(p.recentPrices||[]).slice(-4),price]}:p)}));
     setPriceInput('');
   };
+
+  // T값 수동
   const setTManual = () => {
     const val = tManualInput===''?null:Number(tManualInput);
     setData(d=>({...d,mumuPorts:d.mumuPorts.map(p=>p.id===curId?{...p,tManual:val}:p)}));
     setTManualMode(false); setTManualInput('');
   };
+
+  // 사이클 종료
   const endCycle = () => {
     if (!port) return;
     const allT=port.trades||[]; let totalBuy=0,costBasis=0,hTrack=0;
     allT.forEach(t=>{if(t.type==='매수'){totalBuy+=t.price*t.qty;costBasis+=t.price*t.qty;hTrack+=t.qty;}else if(hTrack>0){const ac=costBasis/hTrack;costBasis-=ac*t.qty;hTrack=Math.max(0,hTrack-t.qty);}});
     const sellTotal=allT.filter(t=>t.type==='매도').reduce((s,t)=>s+t.price*t.qty,0);
-    const profitAmt=Math.round((sellTotal-(totalBuy-costBasis))*100)/100;
-    const profitPct=Math.round(((totalBuy-costBasis)>0?profitAmt/(totalBuy-costBasis)*100:0)*100)/100;
-    const newCy={id:'cy'+genId(),portId:curId,cycleNo:portCycles.length+1,ticker:port.ticker,nickname:port.nickname,version:port.version,seed:port.seed,splits:port.splits,targetPct:port.targetPct,startDate:allT[0]?.date||port.createdAt,endDate:new Date().toISOString().slice(0,10),reason:'수동종료',trades:[...allT],finalT:T,finalAvg:avg,finalHoldings:holdings,buyTotal:totalBuy,sellTotal,profitAmt,profitPct,remaining};
+    const soldCost=totalBuy-costBasis;
+    const profitAmt=Math.round((sellTotal-soldCost)*100)/100;
+    const profitPct=Math.round((soldCost>0?profitAmt/soldCost*100:0)*100)/100;
+    const newCy={id:'cy'+genId(),portId:curId,cycleNo:portCycles.length+1,ticker:port.ticker,nickname:port.nickname,seed:port.seed,splits:port.splits,targetPct:port.targetPct,startDate:allT[0]?.date||port.createdAt,endDate:new Date().toISOString().slice(0,10),reason:'수동종료',trades:[...allT],finalT:T,finalAvg:avg,finalHoldings:holdings,buyTotal:totalBuy,sellTotal,profitAmt,profitPct,remaining};
     setData(d=>({...d,mumuCycles:[...(d.mumuCycles||[]),newCy],mumuPorts:d.mumuPorts.map(p=>p.id===curId?{...p,trades:[],tManual:undefined,lastPrice:0,cycleNo:(p.cycleNo||1)+1}:p)}));
     setCycleModal(false);
   };
+
+  // 거래 삭제
   const deleteTrade = (trId) => { setData(d=>({...d,mumuPorts:d.mumuPorts.map(p=>p.id===curId?{...p,trades:p.trades.filter(t=>t.id!==trId)}:p)})); setConfirmDel(null); };
+
+  // 포트 삭제
+  const deletePort = (portId) => {
+    setData(d=>({...d,mumuPorts:d.mumuPorts.filter(p=>p.id!==portId),mumuCycles:d.mumuCycles.filter(c=>c.portId!==portId)}));
+    setConfirmDelPort(null); setView('list'); setCurId(null);
+  };
+
+  // 이력 수동 추가
+  const saveHist = () => {
+    const cy = {id:'cy'+genId(),portId:histForm.portId||'manual',cycleNo:cycles.length+1,ticker:histForm.ticker,nickname:histForm.nickname,seed:Number(histForm.seed)||0,splits:Number(histForm.splits)||40,startDate:histForm.startDate,endDate:histForm.endDate,reason:histForm.reason||'수동입력',trades:[],finalT:0,finalAvg:0,finalHoldings:0,buyTotal:0,sellTotal:0,profitAmt:Number(histForm.profitAmt)||0,profitPct:Number(histForm.profitPct)||0,remaining:0};
+    setData(d=>({...d,mumuCycles:[...(d.mumuCycles||[]),cy]}));
+    setHistModal(false); setHistForm({portId:'',ticker:'',nickname:'',startDate:'',endDate:'',seed:'',splits:'40',reason:'',profitAmt:'',profitPct:''});
+  };
+
+  // 누적 실현 손익
+  const totalProfit = cycles.reduce((s,c)=>s+(c.profitAmt||0),0);
 
   return (
     <div className="space-y-4">
-      {/* 포트 선택 바 */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {ports.map(p=>(
-          <button key={p.id} onClick={()=>{setCurId(p.id);setTab('dashboard');}} className={`px-3 py-1.5 rounded-xl text-sm font-bold transition-all ${curId===p.id?"bg-[#1a2744] text-white":"bg-gray-100 text-gray-600"}`}>
-            {p.ticker} {p.nickname&&<span className="font-normal opacity-70 ml-1">{p.nickname}</span>}
-          </button>
-        ))}
-        <button onClick={openAddPort} className="px-3 py-1.5 rounded-xl text-sm font-bold bg-blue-50 text-blue-600 hover:bg-blue-100">+ 포트 추가</button>
-      </div>
-      {!port&&<Card><div className="text-center py-10 text-gray-400"><p className="text-4xl mb-3">📈</p><p className="text-sm">포트폴리오를 추가하세요</p></div></Card>}
-      {port&&<>
-        {/* 서브탭 */}
-        <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
-          {[['dashboard','📊 현황'],['trades','📋 거래'],['cycles','🏆 사이클']].map(([k,l])=>(
-            <button key={k} onClick={()=>setTab(k)} className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${tab===k?"bg-white text-[#1a2744] shadow-sm":"text-gray-500"}`}>{l}</button>
+      {view==='list' && <>
+        {/* 상단 탭 */}
+        <div className="flex border-b border-gray-200">
+          {[['active',`진행중 (${ports.length})`],['history',`이력 (${cycles.length})`]].map(([k,l])=>(
+            <button key={k} onClick={()=>setMainTab(k)} className={`flex-1 py-2.5 text-sm font-bold transition-all border-b-2 ${mainTab===k?"border-[#1a2744] text-[#1a2744]":"border-transparent text-gray-400"}`}>{l}</button>
           ))}
         </div>
 
-        {tab==='dashboard'&&<div className="space-y-4">
-          <Card>
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-lg font-extrabold text-[#1a2744]">{port.ticker}</span>
-                  {port.nickname&&<span className="text-sm text-gray-500">{port.nickname}</span>}
-                  <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{background:PHASE_COLOR[phase]+'22',color:PHASE_COLOR[phase]}}>{mode==='reverse'?'🔄 리버스':PHASE_LABEL[phase]}</span>
-                  <span className="text-xs text-gray-400">사이클 {port.cycleNo||1}</span>
+        {/* 진행중 탭 */}
+        {mainTab==='active' && <div className="space-y-3">
+          <div className="flex justify-end"><Btn size="sm" onClick={()=>{setEditPort(null);setPortForm({ticker:'SOXL',nickname:'',seed:'15000',splits:'40',targetPct:'20',fee:'0.07'});setPortModal(true);}}>+ 추가</Btn></div>
+          {ports.length===0 && <Card><div className="text-center py-10 text-gray-400"><p className="text-4xl mb-3">📈</p><p className="text-sm">진행중인 포트폴리오가 없습니다</p></div></Card>}
+          {ports.map(p=>{
+            const pT=mumuCalcT(p), pH=mumuCalcH(p), pAvg=mumuCalcAvg(p), pRem=mumuCalcRem(p);
+            const pPhase=mumuPhase(p), pMode=mumuMode(p);
+            const pStar=mumuStarPct(p.ticker,p.splits,pT);
+            const pStarPrice=mumuStarPrice(p);
+            return (
+              <Card key={p.id} className="cursor-pointer hover:shadow-md transition-all" onClick={()=>{setCurId(p.id);setView('detail');}}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base font-extrabold text-[#1a2744]">{p.ticker}</span>
+                    {p.nickname&&<span className="text-sm text-gray-500">{p.nickname}</span>}
+                    <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{background:PHASE_COLOR[pPhase]+'22',color:PHASE_COLOR[pPhase]}}>{pMode==='reverse'?'🔄 리버스':PHASE_LABEL[pPhase]}</span>
+                  </div>
+                  <span className="text-xs text-gray-400">T={pT.toFixed(2)} · 사이클 {p.cycleNo||1}</span>
                 </div>
-                <p className="text-xs text-gray-400 mt-0.5">시드 {fmtUSD(port.seed,0)} · {port.splits}분할 · 목표 {port.targetPct}%</p>
-              </div>
-              <div className="flex gap-1">
-                <Btn size="sm" variant="ghost" onClick={()=>openEditPort(port)}>수정</Btn>
-                <Btn size="sm" variant="danger" onClick={()=>setCycleModal(true)}>사이클종료</Btn>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 mb-3">
-              <input type="number" value={priceInput} onChange={e=>setPriceInput(e.target.value)} placeholder={`현재가 입력 (현재: ${fmtUSD(curPrice)})`} className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2744]/30"/>
-              <Btn size="sm" onClick={updatePrice} disabled={!priceInput}>업데이트</Btn>
-            </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {[['T값',T.toFixed(2),'#4F86C6'],['보유수량',holdings+'주','#1a2744'],['평단가',fmtUSD(avg),'#9B6FD4'],['잔금',fmtUSD(remaining,0),'#82C596']].map(([l,v,c])=>(
-                <div key={l} className="p-3 rounded-xl bg-gray-50 text-center"><p className="text-xs text-gray-400 mb-0.5">{l}</p><p className="text-sm font-bold" style={{color:c}}>{v}</p></div>
-              ))}
-            </div>
-          </Card>
-          {curPrice>0&&holdings>0&&<Card className="!p-4">
-            <div className="grid grid-cols-3 gap-3 text-center">
-              <div><p className="text-xs text-gray-400">평가금액</p><p className="text-base font-bold text-[#1a2744]">{fmtUSD(evalAmt,0)}</p></div>
-              <div><p className="text-xs text-gray-400">평가손익</p><p className={`text-base font-bold ${evalPct>=0?"text-green-600":"text-red-500"}`}>{evalPct>=0?'+':''}{evalPct.toFixed(2)}%</p></div>
-              <div><p className="text-xs text-gray-400">별지점</p><p className="text-sm font-bold text-amber-500">{fmtUSD(starPrice)}<span className="text-xs ml-1">({starPct.toFixed(1)}%)</span></p></div>
-            </div>
-          </Card>}
-          <Card>
-            <SectionTitle>🎯 오늘의 가이드</SectionTitle>
-            <div className="flex items-center gap-4 mb-3 text-sm">
-              <span className="text-gray-500">1회 매수금: <span className="font-bold text-[#1a2744]">{fmtUSD(unitBuy,0)}</span></span>
-              <span className="text-gray-500">별지점: <span className="font-bold text-amber-500">{fmtUSD(starBuyPrice)}</span></span>
-            </div>
-            {guide.buys.length>0&&<div className="mb-3"><p className="text-xs font-bold text-blue-600 mb-2">📥 매수 가이드</p>
-              <div className="space-y-2">{guide.buys.map((g,i)=><div key={i} className="flex items-center justify-between p-2.5 rounded-xl bg-blue-50"><span className="text-sm text-blue-700">{g.label}</span><div className="text-right"><span className="text-sm font-bold text-blue-800">{fmtUSD(g.price)}</span><span className="text-xs text-blue-500 ml-2">{g.qty}주</span></div></div>)}</div>
-            </div>}
-            {guide.sells.length>0&&<div><p className="text-xs font-bold text-red-500 mb-2">📤 매도 가이드</p>
-              <div className="space-y-2">{guide.sells.map((g,i)=><div key={i} className="flex items-center justify-between p-2.5 rounded-xl bg-red-50"><span className="text-sm text-red-700">{g.label}</span><div className="text-right"><span className="text-sm font-bold text-red-800">{fmtUSD(g.price)}</span><span className="text-xs text-red-500 ml-2">{g.qty}주</span></div></div>)}</div>
-            </div>}
-            <div className="mt-3 pt-3 border-t border-gray-100">
-              {!tManualMode?<button onClick={()=>{setTManualMode(true);setTManualInput(port.tManual!=null?String(port.tManual):'');}} className="text-xs text-gray-400 hover:text-gray-600">T값 수동 설정 {port.tManual!=null&&<span className="text-blue-500 ml-1">(현재: {port.tManual})</span>}</button>
-              :<div className="flex items-center gap-2"><span className="text-xs text-gray-500">T값 직접:</span><input type="number" value={tManualInput} onChange={e=>setTManualInput(e.target.value)} className="w-20 border border-gray-200 rounded-lg px-2 py-1 text-sm focus:outline-none" placeholder="자동"/><Btn size="sm" onClick={setTManual}>적용</Btn><button onClick={()=>{setTManualInput('');setTManual();}} className="text-xs text-red-400">초기화</button><button onClick={()=>setTManualMode(false)} className="text-xs text-gray-400">취소</button></div>}
-            </div>
-          </Card>
+                <div className="grid grid-cols-4 gap-2 text-xs text-center">
+                  <div className="bg-gray-50 rounded-lg p-2"><p className="text-gray-400">평단</p><p className="font-bold text-gray-700">{pH>0?fmtUSD(pAvg):'-'}</p></div>
+                  <div className="bg-gray-50 rounded-lg p-2"><p className="text-gray-400">보유</p><p className="font-bold text-gray-700">{pH}주</p></div>
+                  <div className="bg-blue-50 rounded-lg p-2"><p className="text-gray-400">★%</p><p className="font-bold text-blue-600">{pStar.toFixed(1)}%</p></div>
+                  <div className="bg-amber-50 rounded-lg p-2"><p className="text-gray-400">★가격</p><p className="font-bold text-amber-600">{pAvg>0?fmtUSD(pStarPrice):'-'}</p></div>
+                </div>
+              </Card>
+            );
+          })}
         </div>}
 
-        {tab==='trades'&&<div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <span className="text-sm text-gray-500">총 {(port.trades||[]).length}건</span>
-            <Btn size="sm" onClick={()=>{setTradeForm({date:new Date().toISOString().slice(0,10),type:'매수',price:'',qty:'',tTag:'T+1',memo:''});setTradeModal(true);}}>+ 거래 추가</Btn>
+        {/* 이력 탭 */}
+        {mainTab==='history' && <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            {totalProfit!==0&&<div className="p-3 rounded-xl bg-green-50 flex-1 mr-3"><p className="text-xs text-gray-400">누적 실현 손익</p><p className={`text-lg font-extrabold ${totalProfit>=0?"text-green-600":"text-red-500"}`}>{totalProfit>=0?'+':''}{fmtUSD(totalProfit)}</p><p className="text-xs text-gray-400">{cycles.length}사이클 완료 · 승률 {cycles.length>0?Math.round(cycles.filter(c=>c.profitAmt>=0).length/cycles.length*100):0}%</p></div>}
+            <Btn size="sm" onClick={()=>setHistModal(true)}>+ 이력 추가</Btn>
           </div>
-          <Card>
-            {!(port.trades||[]).length&&<p className="text-sm text-gray-400 text-center py-6">거래 내역이 없습니다</p>}
-            <div className="space-y-2">{[...(port.trades||[])].reverse().map(tr=>(
-              <div key={tr.id} className={`flex items-center justify-between p-3 rounded-xl ${tr.type==='매수'?"bg-blue-50":"bg-red-50"}`}>
-                <div><div className="flex items-center gap-2"><span className={`text-xs font-bold px-1.5 py-0.5 rounded ${tr.type==='매수'?"bg-blue-200 text-blue-800":"bg-red-200 text-red-800"}`}>{tr.type}</span><span className="text-xs text-gray-500">{tr.tTag}</span><span className="text-xs text-gray-400">{tr.date}</span></div>{tr.memo&&<p className="text-xs text-gray-400 mt-0.5">{tr.memo}</p>}</div>
-                <div className="flex items-center gap-3"><div className="text-right"><p className="text-sm font-bold text-gray-800">{fmtUSD(tr.price)} × {tr.qty}주</p><p className="text-xs text-gray-500">{fmtUSD(tr.price*tr.qty,0)}</p></div><Btn size="sm" variant="danger" onClick={()=>setConfirmDel(tr.id)}>삭제</Btn></div>
-              </div>
-            ))}</div>
-          </Card>
-        </div>}
-
-        {tab==='cycles'&&<div className="space-y-3">
-          {portCycles.length===0&&<Card><p className="text-sm text-gray-400 text-center py-6">완료된 사이클이 없습니다</p></Card>}
-          {[...portCycles].reverse().map(cy=>(
-            <Card key={cy.id}>
-              <div className="flex items-center justify-between mb-2">
-                <div><span className="text-sm font-bold text-gray-800">사이클 {cy.cycleNo}</span><span className="text-xs text-gray-400 ml-2">{cy.startDate} ~ {cy.endDate}</span><span className="text-xs text-gray-400 ml-2">{cy.reason}</span></div>
-                <span className={`text-sm font-bold ${cy.profitPct>=0?"text-green-600":"text-red-500"}`}>{cy.profitPct>=0?'+':''}{cy.profitPct.toFixed(2)}%</span>
-              </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 text-xs">
-                {[['총매수',fmtUSD(cy.buyTotal,0)],['총매도',fmtUSD(cy.sellTotal,0)],['손익',fmtUSD(cy.profitAmt)],['거래',cy.trades.length+'건']].map(([l,v])=>(
-                  <div key={l} className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-gray-400">{l}</p><p className="font-bold text-gray-700">{v}</p></div>
+          {cycles.length===0&&<Card><p className="text-sm text-gray-400 text-center py-6">완료된 사이클이 없습니다</p></Card>}
+          {/* 포트별 그룹 */}
+          {(() => {
+            const grouped = {};
+            cycles.forEach(cy => {
+              const key = cy.portId+'_'+cy.ticker+'_'+(cy.nickname||'');
+              if (!grouped[key]) grouped[key] = {ticker:cy.ticker,nickname:cy.nickname,cycles:[]};
+              grouped[key].cycles.push(cy);
+            });
+            return Object.values(grouped).map((g,gi)=>(
+              <div key={gi}>
+                <p className="text-xs font-bold text-gray-500 mb-2">{g.ticker} {g.nickname&&`· ${g.nickname}`}</p>
+                {[...g.cycles].reverse().map(cy=>(
+                  <Card key={cy.id} className="mb-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <span className="text-sm font-bold text-gray-800">사이클 {cy.cycleNo}</span>
+                        <span className="text-xs text-gray-400 ml-2">{cy.startDate} ~ {cy.endDate}</span>
+                        <span className={`text-xs ml-2 px-1.5 py-0.5 rounded-full ${cy.reason==='수동입력'?'bg-gray-100 text-gray-500':'bg-blue-50 text-blue-500'}`}>{cy.reason}</span>
+                      </div>
+                      <span className={`text-sm font-extrabold ${cy.profitAmt>=0?"text-green-600":"text-red-500"}`}>{cy.profitAmt>=0?'+':''}{fmtUSD(cy.profitAmt)} <span className="text-xs">({cy.profitPct>=0?'+':''}{cy.profitPct.toFixed(2)}%)</span></span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      {[['시드',fmtUSD(cy.seed,0)],['분할',cy.splits+'분할'],['거래',cy.trades?.length+'건']].map(([l,v])=>(
+                        <div key={l} className="bg-gray-50 rounded-lg p-1.5 text-center"><p className="text-gray-400">{l}</p><p className="font-bold text-gray-600">{v}</p></div>
+                      ))}
+                    </div>
+                  </Card>
                 ))}
               </div>
-            </Card>
-          ))}
+            ));
+          })()}
         </div>}
       </>}
 
+      {/* ── 포트 상세 뷰 ── */}
+      {view==='detail' && port && <div className="space-y-4">
+        {/* 헤더 */}
+        <div className="flex items-center gap-3">
+          <button onClick={()=>setView('list')} className="text-gray-400 hover:text-gray-700 text-lg">←</button>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-lg font-extrabold text-[#1a2744]">{port.ticker}</span>
+              {port.nickname&&<span className="text-sm text-gray-500">{port.nickname}</span>}
+              <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{background:PHASE_COLOR[phase]+'22',color:PHASE_COLOR[phase]}}>{mode==='reverse'?'🔄 리버스':PHASE_LABEL[phase]}</span>
+              <span className="text-xs text-gray-400">사이클 {port.cycleNo||1}회차</span>
+            </div>
+          </div>
+          <div className="flex gap-1">
+            <Btn size="sm" variant="ghost" onClick={()=>{setEditPort(port);setPortForm({ticker:port.ticker,nickname:port.nickname||'',seed:String(port.seed),splits:String(port.splits),targetPct:String(port.targetPct),fee:String(port.fee)});setPortModal(true);}}>수정</Btn>
+            <Btn size="sm" variant="danger" onClick={()=>setConfirmDelPort(port.id)}>삭제</Btn>
+          </div>
+        </div>
+
+        {/* 현재가 입력 */}
+        <Card className="!p-3">
+          <div className="flex items-center gap-2">
+            <input type="number" value={priceInput} onChange={e=>setPriceInput(e.target.value)} placeholder={`현재가 (${fmtUSD(curPrice)})`} className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2744]/30"/>
+            <Btn size="sm" onClick={updatePrice} disabled={!priceInput}>업데이트</Btn>
+          </div>
+        </Card>
+
+        {/* 진행 상황 */}
+        <Card>
+          <div className="flex items-center justify-between mb-3">
+            <SectionTitle>진행 상황</SectionTitle>
+            {curPrice>0&&holdings>0&&<span className={`text-sm font-bold ${evalPct>=0?"text-green-600":"text-red-500"}`}>{evalPct>=0?'+':''}{evalPct.toFixed(2)}%</span>}
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            {[['시드',fmtUSD(port.seed,0)],['매입금액',fmtUSD(mumuCalcInv(port),0)],['평단가',holdings>0?fmtUSD(avg):'-'],['보유수량',holdings+'주'],['잔금',fmtUSD(remaining,0)],['현재수익률',curPrice>0&&holdings>0?`${evalPct>=0?'+':''}${evalPct.toFixed(2)}%`:'-']].map(([l,v])=>(
+              <div key={l} className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-400">{l}</span><span className="font-bold text-gray-800">{v}</span></div>
+            ))}
+          </div>
+          {/* T값 & 별지점 */}
+          <div className="grid grid-cols-2 gap-3 mt-3">
+            <div className="p-3 rounded-xl text-center" style={{background:PHASE_COLOR[phase]+'15'}}>
+              <p className="text-xs text-gray-400 mb-1">T값 (진행 회차)</p>
+              <p className="text-2xl font-extrabold" style={{color:PHASE_COLOR[phase]}}>{T.toFixed(2)}</p>
+              <p className="text-xs text-gray-400 mt-1">1회 매수금: {fmtUSD(unitBuy,0)}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-blue-50 text-center">
+              <p className="text-xs text-gray-400 mb-1">★ 별% / 별지점</p>
+              <p className="text-xl font-extrabold text-blue-600">{starPct.toFixed(2)}%</p>
+              <p className="text-sm font-bold text-blue-500">{avg>0?fmtUSD(starPrice):'-'}</p>
+            </div>
+          </div>
+          {/* T값 수동 */}
+          <div className="mt-3 pt-2 border-t border-gray-100">
+            {!tManualMode
+              ?<button onClick={()=>{setTManualMode(true);setTManualInput(port.tManual!=null?String(port.tManual):'');}} className="text-xs text-gray-400 hover:text-gray-600">T값 수동 설정 {port.tManual!=null&&<span className="text-blue-500 ml-1">(현재: {port.tManual})</span>}</button>
+              :<div className="flex items-center gap-2"><span className="text-xs text-gray-500">T값:</span><input type="number" value={tManualInput} onChange={e=>setTManualInput(e.target.value)} className="w-20 border border-gray-200 rounded-lg px-2 py-1 text-sm focus:outline-none" placeholder="자동"/><Btn size="sm" onClick={setTManual}>적용</Btn><button onClick={()=>{setTManualInput('');setTManual();}} className="text-xs text-red-400">초기화</button><button onClick={()=>setTManualMode(false)} className="text-xs text-gray-400">취소</button></div>
+            }
+          </div>
+        </Card>
+
+        {/* 오늘의 주문 가이드 */}
+        <Card>
+          <SectionTitle>🎯 오늘의 주문 가이드</SectionTitle>
+          {guide.buys.length>0&&<div className="mb-3">
+            <p className="text-xs font-bold text-blue-500 mb-2">● 매수 가이드 (LOC)</p>
+            <div className="space-y-2">{guide.buys.map((g,i)=>(
+              <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-blue-50">
+                <span className="text-sm text-blue-700">{g.label}</span>
+                <div className="text-right"><span className="text-base font-extrabold text-blue-800">{fmtUSD(g.price)}</span><span className="text-xs text-blue-500 ml-2">×{g.qty}주</span></div>
+              </div>
+            ))}</div>
+          </div>}
+          {guide.sells.length>0&&<div>
+            <p className="text-xs font-bold text-red-500 mb-2">● 매도 가이드</p>
+            <div className="space-y-2">{guide.sells.map((g,i)=>(
+              <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-red-50">
+                <span className="text-sm text-red-700">{g.label}</span>
+                <div className="text-right"><span className="text-base font-extrabold text-red-800">{fmtUSD(g.price)}</span><span className="text-xs text-red-500 ml-2">×{g.qty}주</span></div>
+              </div>
+            ))}</div>
+          </div>}
+        </Card>
+
+        {/* 거래 내역 */}
+        <Card>
+          <div className="flex items-center justify-between mb-3">
+            <SectionTitle>거래 내역 ({(port.trades||[]).length}건)</SectionTitle>
+            <div className="flex gap-1">
+              <Btn size="sm" variant="secondary" onClick={()=>{setParseText('');setParsedTrade(null);setParseModal(true);}}>📱 문자</Btn>
+              <Btn size="sm" onClick={()=>{setTradeForm({date:new Date().toISOString().slice(0,10),type:'매수',price:'',qty:'',tTag:'T+1',memo:''});setTradeModal(true);}}>+ 입력</Btn>
+            </div>
+          </div>
+          {!(port.trades||[]).length&&<p className="text-sm text-gray-400 text-center py-4">거래 내역 없음</p>}
+          <div className="space-y-2">{[...(port.trades||[])].reverse().map(tr=>(
+            <div key={tr.id} className={`flex items-center justify-between p-3 rounded-xl ${tr.type==='매수'?"bg-blue-50":"bg-red-50"}`}>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${tr.type==='매수'?"bg-blue-200 text-blue-800":"bg-red-200 text-red-800"}`}>{tr.type}</span>
+                  <span className="text-xs text-gray-500">{tr.tTag}</span>
+                  <span className="text-xs text-gray-400">{tr.date}</span>
+                </div>
+                {tr.memo&&<p className="text-xs text-gray-400 mt-0.5">{tr.memo}</p>}
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="text-right"><p className="text-sm font-bold">{fmtUSD(tr.price)} × {tr.qty}주</p><p className="text-xs text-gray-400">{fmtUSD(tr.price*tr.qty,0)}</p></div>
+                <Btn size="sm" variant="danger" onClick={()=>setConfirmDel(tr.id)}>삭제</Btn>
+              </div>
+            </div>
+          ))}</div>
+        </Card>
+
+        {/* 설정 & 목표치 */}
+        <Card>
+          <SectionTitle>설정 & 목표치</SectionTitle>
+          <div className="space-y-2 text-sm">
+            {[['분할',port.splits+'일'],['1회 투자금',fmtUSD(port.seed/port.splits,0)],['목표 수익률',`+${port.targetPct}%`],['수수료율',port.fee+'%'],['리버스 발동',`T > ${port.splits-1}`],['현재 사이클',`${port.cycleNo||1}회차`]].map(([l,v])=>(
+              <div key={l} className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-400">{l}</span><span className="font-bold text-gray-700">{v}</span></div>
+            ))}
+          </div>
+          <div className="flex gap-2 mt-4">
+            <Btn className="flex-1" variant="secondary" onClick={()=>setCycleModal(true)}>↻ 사이클 종료 & 새 시작</Btn>
+          </div>
+        </Card>
+      </div>}
+
+      {/* ── 모달들 ── */}
       <Modal open={portModal} onClose={()=>setPortModal(false)} title={editPort?"포트 수정":"포트 추가"}>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3"><Inp label="티커" value={portForm.ticker} onChange={v=>setPortForm(f=>({...f,ticker:v.toUpperCase()}))} placeholder="SOXL" required/><Inp label="닉네임" value={portForm.nickname} onChange={v=>setPortForm(f=>({...f,nickname:v}))} placeholder="메리츠1"/></div>
+          <div className="grid grid-cols-2 gap-3"><Inp label="티커" value={portForm.ticker} onChange={v=>setPortForm(f=>({...f,ticker:v.toUpperCase()}))} required/><Inp label="닉네임" value={portForm.nickname} onChange={v=>setPortForm(f=>({...f,nickname:v}))} placeholder="메리츠1"/></div>
           <div className="grid grid-cols-2 gap-3"><Inp label="시드 ($)" type="number" value={portForm.seed} onChange={v=>setPortForm(f=>({...f,seed:v}))}/><Sel label="분할수" value={portForm.splits} onChange={v=>setPortForm(f=>({...f,splits:v}))} options={[{value:'20',label:'20분할'},{value:'30',label:'30분할'},{value:'40',label:'40분할'}]}/></div>
           <div className="grid grid-cols-2 gap-3"><Inp label="목표수익률 (%)" type="number" value={portForm.targetPct} onChange={v=>setPortForm(f=>({...f,targetPct:v}))}/><Inp label="수수료 (%)" type="number" value={portForm.fee} onChange={v=>setPortForm(f=>({...f,fee:v}))}/></div>
           <div className="flex gap-2 justify-end pt-2"><Btn variant="secondary" onClick={()=>setPortModal(false)}>취소</Btn><Btn onClick={savePort}>저장</Btn></div>
         </div>
       </Modal>
-      <Modal open={tradeModal} onClose={()=>setTradeModal(false)} title="거래 추가">
+
+      <Modal open={tradeModal} onClose={()=>setTradeModal(false)} title="거래 입력">
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <Sel label="유형" value={tradeForm.type} onChange={v=>setTradeForm(f=>({...f,type:v,tTag:v==='매수'?'T+1':'퀴터매도'}))} options={[{value:'매수',label:'📥 매수'},{value:'매도',label:'📤 매도'}]}/>
-            <Sel label="T태그" value={tradeForm.tTag} onChange={v=>setTradeForm(f=>({...f,tTag:v}))} options={tradeForm.type==='매수'?[{value:'T+1',label:'T+1'},{value:'T+0.5',label:'T+0.5'},{value:'T+0.25',label:'T+0.25'}]:[{value:'퀴터매도',label:'퀴터매도'},{value:'지정가매도',label:'지정가매도'},{value:'MOC',label:'MOC'},{value:'전량매도',label:'전량매도'}]}/>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Inp label="가격 ($)" type="number" value={tradeForm.price} onChange={v=>setTradeForm(f=>({...f,price:v}))} required/>
-            <Inp label="수량 (주)" type="number" value={tradeForm.qty} onChange={v=>setTradeForm(f=>({...f,qty:v}))} required/>
+            <Sel label="구분" value={tradeForm.type} onChange={v=>setTradeForm(f=>({...f,type:v,tTag:v==='매수'?'T+1':'퀴터매도'}))} options={[{value:'매수',label:'매수'},{value:'매도',label:'매도'}]}/>
+            <Sel label="T 태그" value={tradeForm.tTag} onChange={v=>setTradeForm(f=>({...f,tTag:v}))} options={tradeForm.type==='매수'?[{value:'T+1',label:'T+1 (1회 전체)'},{value:'T+0.5',label:'T+0.5 (절반)'},{value:'T+0.25',label:'T+0.25'}]:[{value:'퀴터매도',label:'퀴터매도 (T×0.75)'},{value:'지정가매도',label:'지정가 (비율만큼 T감소)'},{value:'MOC',label:'MOC'},{value:'전량매도',label:'전량매도 (T→0)'}]}/>
           </div>
           <Inp label="날짜" type="date" value={tradeForm.date} onChange={v=>setTradeForm(f=>({...f,date:v}))}/>
+          <div className="grid grid-cols-2 gap-3">
+            <Inp label="체결가 (USD)" type="number" value={tradeForm.price} onChange={v=>setTradeForm(f=>({...f,price:v}))} required/>
+            <Inp label="수량 (주)" type="number" value={tradeForm.qty} onChange={v=>setTradeForm(f=>({...f,qty:v}))} required/>
+          </div>
           <Inp label="메모" value={tradeForm.memo} onChange={v=>setTradeForm(f=>({...f,memo:v}))}/>
-          {tradeForm.price&&tradeForm.qty&&<div className="p-2 rounded-lg bg-gray-50 text-xs text-center text-gray-600">거래금액: <span className="font-bold">{fmtUSD(Number(tradeForm.price)*Number(tradeForm.qty),0)}</span></div>}
-          <div className="flex gap-2 justify-end pt-2"><Btn variant="secondary" onClick={()=>setTradeModal(false)}>취소</Btn><Btn onClick={saveTrade}>저장</Btn></div>
+          {tradeForm.price&&tradeForm.qty&&<div className="p-2 rounded-lg bg-gray-50 text-xs text-center">거래금액: <span className="font-bold">{fmtUSD(Number(tradeForm.price)*Number(tradeForm.qty),0)}</span></div>}
+          <div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setTradeModal(false)}>취소</Btn><Btn onClick={saveTrade}>저장</Btn></div>
         </div>
       </Modal>
-      <Modal open={cycleModal} onClose={()=>setCycleModal(false)} title="사이클 종료">
+
+      <Modal open={parseModal} onClose={()=>{setParseModal(false);setParseText('');setParsedTrade(null);}} title="체결 문자 입력">
+        <div className="space-y-3">
+          <p className="text-xs text-gray-400">카카오톡 체결 알림 복사 후 붙여넣기 · 해외주식 USD만 적용</p>
+          <textarea value={parseText} onChange={e=>setParseText(e.target.value)} placeholder={"[메리츠증권] 해외주식 주문체결 안내\n계좌명 : ...\n체결단가 : USD ...\n체결수량 : N주"} className="w-full h-36 border border-gray-200 rounded-xl p-3 text-sm focus:outline-none resize-none" />
+          <Sel label="T 태그" value={parseTag} onChange={v=>setParseTag(v)} options={[{value:'T+1',label:'T+1 (1회 전체)'},{value:'T+0.5',label:'T+0.5 (절반)'},{value:'T+0.25',label:'T+0.25'},{value:'퀴터매도',label:'퀴터매도'},{value:'지정가매도',label:'지정가매도'},{value:'MOC',label:'MOC'},{value:'전량매도',label:'전량매도'}]}/>
+          {!parsedTrade
+            ?<Btn className="w-full" onClick={handleParse} disabled={!parseText.trim()}>파싱 →</Btn>
+            :<div className="space-y-3">
+              <div className="p-3 rounded-xl bg-gray-50 text-sm space-y-1">
+                <div className="flex justify-between"><span className="text-gray-400">종목</span><span className="font-bold">{parsedTrade.ticker}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400">구분</span><span className={`font-bold ${parsedTrade.type==='매수'?"text-blue-600":"text-red-500"}`}>{parsedTrade.type}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400">가격</span><span className="font-bold">{fmtUSD(parsedTrade.price)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400">수량</span><span className="font-bold">{parsedTrade.qty}주</span></div>
+                <div className="flex justify-between"><span className="text-gray-400">날짜</span><span className="font-bold">{parsedTrade.date}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400">T태그</span><span className="font-bold text-blue-600">{parseTag}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400">거래금액</span><span className="font-bold">{fmtUSD(parsedTrade.price*parsedTrade.qty,0)}</span></div>
+              </div>
+              <div className="flex gap-2"><Btn variant="secondary" onClick={()=>setParsedTrade(null)} className="flex-1">다시 파싱</Btn><Btn onClick={saveParsedTrade} className="flex-1">저장</Btn></div>
+            </div>
+          }
+        </div>
+      </Modal>
+
+      <Modal open={cycleModal} onClose={()=>setCycleModal(false)} title="사이클 종료 & 새 시작">
         <div className="space-y-3">
           <p className="text-sm text-gray-600">사이클을 종료하면 거래 내역이 이력으로 저장되고 새 사이클이 시작됩니다.</p>
           <div className="p-3 rounded-xl bg-gray-50 text-sm space-y-1">
             <div className="flex justify-between"><span className="text-gray-500">최종 T값</span><span className="font-bold">{T.toFixed(2)}</span></div>
-            <div className="flex justify-between"><span className="text-gray-500">잔여 보유</span><span className="font-bold">{holdings}주 ({fmtUSD(avg)} 평단)</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">보유</span><span className="font-bold">{holdings}주 (평단 {holdings>0?fmtUSD(avg):'-'})</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">잔금</span><span className="font-bold">{fmtUSD(remaining,0)}</span></div>
           </div>
           <div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setCycleModal(false)}>취소</Btn><Btn variant="danger" onClick={endCycle}>사이클 종료</Btn></div>
         </div>
       </Modal>
+
+      <Modal open={histModal} onClose={()=>setHistModal(false)} title="이력 수동 추가">
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Inp label="티커" value={histForm.ticker} onChange={v=>setHistForm(f=>({...f,ticker:v.toUpperCase()}))} placeholder="SOXL" required/>
+            <Inp label="닉네임" value={histForm.nickname} onChange={v=>setHistForm(f=>({...f,nickname:v}))} placeholder="메리츠1"/>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Inp label="시작일" type="date" value={histForm.startDate} onChange={v=>setHistForm(f=>({...f,startDate:v}))}/>
+            <Inp label="종료일" type="date" value={histForm.endDate} onChange={v=>setHistForm(f=>({...f,endDate:v}))}/>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Inp label="시드 ($)" type="number" value={histForm.seed} onChange={v=>setHistForm(f=>({...f,seed:v}))}/>
+            <Sel label="분할수" value={histForm.splits} onChange={v=>setHistForm(f=>({...f,splits:v}))} options={[{value:'20',label:'20분할'},{value:'30',label:'30분할'},{value:'40',label:'40분할'}]}/>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Inp label="수익금 ($)" type="number" value={histForm.profitAmt} onChange={v=>setHistForm(f=>({...f,profitAmt:v}))}/>
+            <Inp label="수익률 (%)" type="number" value={histForm.profitPct} onChange={v=>setHistForm(f=>({...f,profitPct:v}))}/>
+          </div>
+          <Inp label="종료 사유" value={histForm.reason} onChange={v=>setHistForm(f=>({...f,reason:v}))} placeholder="수익 실현 / 손절 등"/>
+          <div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setHistModal(false)}>취소</Btn><Btn onClick={saveHist}>저장</Btn></div>
+        </div>
+      </Modal>
+
       <Confirm open={!!confirmDel} message="이 거래를 삭제하시겠습니까?" onConfirm={()=>deleteTrade(confirmDel)} onCancel={()=>setConfirmDel(null)}/>
+      <Confirm open={!!confirmDelPort} message="이 포트와 관련 사이클 이력을 모두 삭제하시겠습니까?" onConfirm={()=>deletePort(confirmDelPort)} onCancel={()=>setConfirmDelPort(null)}/>
     </div>
   );
 };
+
 
 const AccountBookSection = ({ data, setData }) => {
   const [activeTab, setActiveTab] = useState(data.members[0]?.id||"");
