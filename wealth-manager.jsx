@@ -2251,58 +2251,52 @@ export default function App() {
 
   // 마지막 업로드 완료 시간
   const lastUploadRef = React.useRef(0);
-  const UPLOAD_LOCK_MS = 60000; // 업로드 후 60초간 다운로드 차단
-
-  // 데이터 변경 → 즉시 Sheets 업로드 (디바운스 500ms)
   const uploadTimerRef = React.useRef(null);
+
+  // 데이터 변경 → localStorage 즉시 저장 + Sheets 업로드 (디바운스 800ms)
   const setData2 = useCallback((updater) => {
     setDataRaw((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
       saveData(next);
+      // 업로드 예약 시간 미리 기록 (업로드 완료 전에도 다운로드 차단)
+      lastUploadRef.current = Date.now();
       if (uploadTimerRef.current) clearTimeout(uploadTimerRef.current);
       uploadTimerRef.current = setTimeout(async () => {
         setSyncStatus("syncing");
-        const ok = await syncToSheets(next);
-        if (ok) {
-          lastUploadRef.current = Date.now(); // 업로드 완료 시간 기록
-          setSyncStatus("ok");
-        } else {
-          setSyncStatus("error");
-        }
-      }, 500);
+        await syncToSheets(next);
+        lastUploadRef.current = Date.now(); // 업로드 완료 시간 갱신
+        setSyncStatus("ok");
+      }, 800);
       return next;
     });
   }, []);
 
-  // 자동 다운로드: 30초마다 (업로드 후 60초간 차단)
+  // 자동 다운로드: 30초마다 — updatedAt 비교해서 Sheets가 더 최신일 때만 적용
   React.useEffect(() => {
     const autoSync = async () => {
-      const now = Date.now();
-      // 최근 업로드 후 60초 이내면 다운로드 건너뜀
-      if (now - lastUploadRef.current < UPLOAD_LOCK_MS) return;
+      // 최근 10초 내에 업로드 예약/진행 중이면 건너뜀
+      if (Date.now() - lastUploadRef.current < 10000) return;
       setSyncStatus("syncing");
       try {
         const remote = await syncFromSheets();
-        if (remote && Object.keys(remote).length > 0) {
-          const remoteStr = JSON.stringify(remote);
-          const localStr = JSON.stringify(loadData());
-          if (remoteStr !== localStr) {
-            setDataRaw(() => {
-              const merged = { ...DEFAULT_DATA, ...remote };
-              saveData(merged);
-              return merged;
-            });
-          }
-          setSyncStatus("ok");
-        } else {
-          setSyncStatus("ok");
+        if (!remote || Object.keys(remote).length === 0) { setSyncStatus("ok"); return; }
+        const local = loadData();
+        const remoteTs = remote._updatedAt || 0;
+        const localTs = local._updatedAt || 0;
+        // Sheets 데이터가 로컬보다 최신일 때만 덮어씀
+        if (remoteTs > localTs) {
+          setDataRaw(() => {
+            const merged = { ...DEFAULT_DATA, ...remote };
+            saveData(merged);
+            return merged;
+          });
         }
+        setSyncStatus("ok");
       } catch {
         setSyncStatus("error");
       }
     };
 
-    // 앱 시작 시 딜레이 후 한번 (혹시 있을 다른 기기 변경사항 반영)
     const initTimer = setTimeout(autoSync, 3000);
     const interval = setInterval(autoSync, 30000);
     return () => { clearTimeout(initTimer); clearInterval(interval); };
