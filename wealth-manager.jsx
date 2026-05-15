@@ -34,6 +34,7 @@ const DEFAULT_DATA = {
   expenseCategories: DEFAULT_EXPENSE_CATS,
   mumuPorts: [],
   mumuCycles: [],
+  vrPorts: [],
 };
 
 const ACCOUNT_CATEGORIES = [
@@ -1766,6 +1767,607 @@ const DashboardSection = ({ data }) => {
 // ─────────────────────────────────────────────
 // 계좌관리
 // ─────────────────────────────────────────────
+
+// ─────────────────────────────────────────────
+// VR (밸류리밸런싱) 유틸
+// ─────────────────────────────────────────────
+const isKRTicker = (ticker) => /^\d{6}$/.test(ticker?.trim());
+const vrCurrency = (ticker) => isKRTicker(ticker) ? 'KRW' : 'USD';
+const fmtVR = (n, currency) => {
+  if (n == null || isNaN(n)) return '-';
+  if (currency === 'KRW') return '₩' + Math.round(n).toLocaleString();
+  return '$' + Number(n).toFixed(2);
+};
+const fmtVRShort = (n, currency) => {
+  if (n == null || isNaN(n)) return '-';
+  if (currency === 'KRW') {
+    if (Math.abs(n) >= 100000000) return '₩' + (n/100000000).toFixed(1) + '억';
+    if (Math.abs(n) >= 10000) return '₩' + Math.round(n/10000) + '만';
+    return '₩' + Math.round(n).toLocaleString();
+  }
+  if (Math.abs(n) >= 1000) return '$' + (n/1000).toFixed(1) + 'k';
+  return '$' + Number(n).toFixed(0);
+};
+
+const vrCalcInitialV = (port) => port.qty * port.startPrice + port.initialPool;
+
+const vrCalcCurrentV = (port) => {
+  // 현재 V = 저장된 V값 (사이클 갱신될 때마다 업데이트됨)
+  return port.currentV || vrCalcInitialV(port);
+};
+
+const vrCalcPool = (port) => {
+  // Pool = initialPool + 누적적립금 - 매수금액 + 매도금액
+  let pool = port.pool != null ? port.pool : port.initialPool;
+  return pool;
+};
+
+const vrCalcQty = (port) => {
+  let qty = port.qty;
+  (port.trades||[]).forEach(t => {
+    if (t.type === '매수') qty += t.qty;
+    else qty -= t.qty;
+  });
+  return Math.max(0, qty);
+};
+
+const vrCalcAvgPrice = (port) => {
+  let qty = port.qty, cost = port.qty * port.avgPrice;
+  (port.trades||[]).forEach(t => {
+    if (t.type === '매수') { cost += t.price * t.qty; qty += t.qty; }
+    else if (qty > 0) { cost -= (cost/qty)*t.qty; qty -= t.qty; }
+  });
+  return qty > 0 ? cost/qty : 0;
+};
+
+const vrGenBuyTable = (port) => {
+  const V = vrCalcCurrentV(port);
+  const Vmin = V * (1 - port.bandPct/100);
+  const pool = port.pool != null ? port.pool : port.initialPool;
+  const poolLimit = pool * (port.poolLimitPct/100);
+  const qty = port.currentQty != null ? port.currentQty : port.qty;
+  const rows = [];
+  let usedPool = 0;
+  let n = 1;
+  while (usedPool < poolLimit) {
+    const buyPrice = Math.round((Vmin / (qty + n - 1)) * 100) / 100;
+    if (buyPrice <= 0) break;
+    usedPool += buyPrice;
+    rows.push({ qty: qty+n, price: buyPrice, pool: Math.round((poolLimit - usedPool)*100)/100 });
+    n++;
+    if (n > 200) break; // 안전장치
+  }
+  return rows;
+};
+
+const vrGenSellTable = (port) => {
+  const V = vrCalcCurrentV(port);
+  const Vmax = V * (1 + port.bandPct/100);
+  const qty = port.currentQty != null ? port.currentQty : port.qty;
+  const rows = [];
+  for (let n = 1; n <= qty && n <= 100; n++) {
+    const sellPrice = Math.round((Vmax / (qty - n + 1)) * 100) / 100;
+    const poolAfter = (port.pool||0) + sellPrice;
+    rows.push({ qty: qty-n, price: sellPrice, pool: Math.round(poolAfter*100)/100 });
+  }
+  return rows;
+};
+
+const vrNextV = (port) => {
+  const V = vrCalcCurrentV(port);
+  const pool = port.pool != null ? port.pool : port.initialPool;
+  return V + pool / port.G + port.contribution;
+};
+
+const vrCalcTotalAsset = (port, curPrice) => {
+  const qty = port.currentQty != null ? port.currentQty : port.qty;
+  const pool = port.pool != null ? port.pool : port.initialPool;
+  return qty * (curPrice || 0) + pool;
+};
+
+const vrCalcInvested = (port) => {
+  // 투자원금 = 초기투입금(qty*avgPrice + initialPool) + 누적적립금
+  const initial = port.qty * port.avgPrice + port.initialPool;
+  const totalContrib = (port.cycleNo - 1) * port.contribution;
+  return initial + totalContrib;
+};
+
+// ─────────────────────────────────────────────
+// VR 섹션
+// ─────────────────────────────────────────────
+const VRSection = ({ data, setData }) => {
+  const ports = data.vrPorts || [];
+  const [view, setView] = useState('list'); // list | detail
+  const [curId, setCurId] = useState(null);
+  const [mainTab, setMainTab] = useState('active'); // active | history
+
+  // 포트 모달
+  const [portModal, setPortModal] = useState(false);
+  const [editPort, setEditPort] = useState(null);
+  const [portForm, setPortForm] = useState({
+    ticker:'TQQQ', qty:'', avgPrice:'', startPrice:'', initialPool:'',
+    G:'10', bandPct:'15', poolLimitPct:'75', contribution:'250', startDate:''
+  });
+
+  // 거래 모달
+  const [tradeModal, setTradeModal] = useState(false);
+  const [tradeForm, setTradeForm] = useState({date:'',type:'매수',price:'',qty:'',memo:''});
+
+  // 문자 파싱
+  const [parseModal, setParseModal] = useState(false);
+  const [parseText, setParseText] = useState('');
+  const [parsedTrade, setParsedTrade] = useState(null);
+
+  // 사이클 갱신 모달
+  const [cycleModal, setCycleModal] = useState(false);
+  const [cycleEndPrice, setCycleEndPrice] = useState('');
+
+  // 현재가 입력
+  const [priceInput, setPriceInput] = useState('');
+
+  // 삭제 확인
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [confirmDelPort, setConfirmDelPort] = useState(null);
+
+  // 이력 추가
+  const [histModal, setHistModal] = useState(false);
+  const [histForm, setHistForm] = useState({ticker:'',startDate:'',endDate:'',cycleNo:1,startV:'',endV:'',profitAmt:'',profitPct:'',note:''});
+
+  const port = ports.find(p=>p.id===curId);
+  const currency = port ? vrCurrency(port.ticker) : 'USD';
+  const curPrice = port?.lastPrice || 0;
+  const V = port ? vrCalcCurrentV(port) : 0;
+  const Vmin = port ? V*(1-port.bandPct/100) : 0;
+  const Vmax = port ? V*(1+port.bandPct/100) : 0;
+  const pool = port ? (port.pool!=null?port.pool:port.initialPool) : 0;
+  const currentQty = port ? (port.currentQty!=null?port.currentQty:port.qty) : 0;
+  const evalAmt = currentQty * curPrice;
+  const totalAsset = evalAmt + pool;
+  const invested = port ? vrCalcInvested(port) : 0;
+  const profitAmt = totalAsset - invested;
+  const profitPct = totalAsset > 0 ? profitAmt/totalAsset*100 : 0;
+  const nextV = port ? vrNextV(port) : 0;
+
+  // D-day 계산
+  const calcDDay = (port) => {
+    if (!port?.cycleStartDate) return null;
+    const start = new Date(port.cycleStartDate);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 14);
+    const now = new Date();
+    const diff = Math.ceil((end - now) / (1000*60*60*24));
+    return { date: end.toISOString().slice(0,10), diff };
+  };
+
+  const savePort = () => {
+    if (!portForm.ticker.trim() || !portForm.qty || !portForm.startPrice) return;
+    const ticker = portForm.ticker.trim().toUpperCase();
+    const qty = Number(portForm.qty);
+    const startPrice = Number(portForm.startPrice);
+    const avgPrice = Number(portForm.avgPrice) || startPrice;
+    const initialPool = Number(portForm.initialPool) || 0;
+    const initV = qty * startPrice + initialPool;
+    const np = {
+      id: editPort?.id || 'vr_'+genId(),
+      ticker, qty, avgPrice, startPrice, initialPool,
+      G: Number(portForm.G)||10,
+      bandPct: Number(portForm.bandPct)||15,
+      poolLimitPct: Number(portForm.poolLimitPct)||75,
+      contribution: Number(portForm.contribution)||0,
+      startDate: portForm.startDate,
+      cycleStartDate: portForm.startDate,
+      cycleNo: editPort?.cycleNo || 1,
+      currentV: editPort?.currentV || initV,
+      pool: editPort?.pool != null ? editPort.pool : initialPool,
+      currentQty: editPort?.currentQty != null ? editPort.currentQty : qty,
+      lastPrice: editPort?.lastPrice || startPrice,
+      trades: editPort?.trades || [],
+      cycles: editPort?.cycles || [],
+    };
+    setData(d=>({...d, vrPorts: editPort ? d.vrPorts.map(p=>p.id===editPort.id?np:p) : [...(d.vrPorts||[]),np]}));
+    if (!editPort) { setCurId(np.id); setView('detail'); }
+    setPortModal(false);
+  };
+
+  const openEditPort = (p) => {
+    setEditPort(p);
+    setPortForm({ticker:p.ticker,qty:String(p.qty),avgPrice:String(p.avgPrice),startPrice:String(p.startPrice),initialPool:String(p.initialPool),G:String(p.G),bandPct:String(p.bandPct),poolLimitPct:String(p.poolLimitPct),contribution:String(p.contribution),startDate:p.startDate});
+    setPortModal(true);
+  };
+
+  const updatePrice = () => {
+    if (!port||!priceInput) return;
+    setData(d=>({...d,vrPorts:d.vrPorts.map(p=>p.id===curId?{...p,lastPrice:Number(priceInput)}:p)}));
+    setPriceInput('');
+  };
+
+  const saveTrade = () => {
+    if (!port||!tradeForm.price||!tradeForm.qty) return;
+    const tr = {id:'tr'+genId(),date:tradeForm.date||new Date().toISOString().slice(0,10),type:tradeForm.type,price:Number(tradeForm.price),qty:Number(tradeForm.qty),memo:tradeForm.memo};
+    const priceDelta = tradeForm.type==='매수' ? -tr.price*tr.qty : tr.price*tr.qty;
+    const qtyDelta = tradeForm.type==='매수' ? tr.qty : -tr.qty;
+    setData(d=>({...d,vrPorts:d.vrPorts.map(p=>{
+      if(p.id!==curId) return p;
+      return {...p, trades:[...(p.trades||[]),tr], pool:Math.round(((p.pool!=null?p.pool:p.initialPool)+priceDelta)*100)/100, currentQty:(p.currentQty!=null?p.currentQty:p.qty)+qtyDelta};
+    })}));
+    setTradeModal(false); setTradeForm({date:'',type:'매수',price:'',qty:'',memo:''});
+  };
+
+  const parseMsgText = (text) => {
+    const lines = text.split('
+').map(l=>l.trim());
+    const get = (key) => { const l = lines.find(l=>l.startsWith(key)); return l?l.split(':').slice(1).join(':').trim():''; };
+    const typeStr = get('매매구분');
+    const priceStr = (get('체결단가')||'').replace(/USD\s*/i,'').replace(/KRW\s*/i,'').trim();
+    const qtyStr = (get('체결수량')||'').replace('주','').trim();
+    const dateStr = get('체결일자');
+    if (!priceStr||!qtyStr) return null;
+    const type = typeStr.includes('매수')?'매수':'매도';
+    let date = new Date().toISOString().slice(0,10);
+    if (dateStr) { const [m,d]=dateStr.split('/'); date=`${new Date().getFullYear()}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`; }
+    return {type,price:Number(priceStr),qty:Number(qtyStr),date};
+  };
+
+  const handleParse = () => {
+    const result = parseMsgText(parseText);
+    if (!result) { alert('파싱 실패. 문자 형식을 확인해주세요.'); return; }
+    setParsedTrade(result);
+  };
+
+  const saveParsedTrade = () => {
+    if (!port||!parsedTrade) return;
+    const tr = {id:'tr'+genId(),...parsedTrade,memo:''};
+    const priceDelta = parsedTrade.type==='매수'?-tr.price*tr.qty:tr.price*tr.qty;
+    const qtyDelta = parsedTrade.type==='매수'?tr.qty:-tr.qty;
+    setData(d=>({...d,vrPorts:d.vrPorts.map(p=>{
+      if(p.id!==curId) return p;
+      return {...p,trades:[...(p.trades||[]),tr],pool:Math.round(((p.pool!=null?p.pool:p.initialPool)+priceDelta)*100)/100,currentQty:(p.currentQty!=null?p.currentQty:p.qty)+qtyDelta};
+    })}));
+    setParseModal(false); setParseText(''); setParsedTrade(null);
+  };
+
+  const doCycleRenew = () => {
+    if (!port||!cycleEndPrice) return;
+    const endPrice = Number(cycleEndPrice);
+    const endEval = currentQty * endPrice;
+    const newV = Math.round((V + pool/port.G + port.contribution)*100)/100;
+    const newPool = Math.round((pool + port.contribution)*100)/100;
+    const newCycleStart = new Date();
+    const cycle = {
+      id: 'cyc'+genId(), cycleNo: port.cycleNo, startDate: port.cycleStartDate,
+      endDate: new Date().toISOString().slice(0,10), startV: V, endV: newV,
+      endPrice, endEval, startPool: pool, endPool: newPool,
+    };
+    setData(d=>({...d,vrPorts:d.vrPorts.map(p=>{
+      if(p.id!==curId) return p;
+      return {...p, currentV:newV, pool:newPool, cycleNo:(p.cycleNo||1)+1, cycleStartDate:newCycleStart.toISOString().slice(0,10), cycles:[...(p.cycles||[]),cycle], trades:[]};
+    })}));
+    setCycleModal(false); setCycleEndPrice('');
+  };
+
+  const deletePort = (portId) => {
+    setData(d=>({...d,vrPorts:d.vrPorts.filter(p=>p.id!==portId)}));
+    setConfirmDelPort(null); setView('list'); setCurId(null);
+  };
+
+  const buyTable = port ? vrGenBuyTable(port) : [];
+  const sellTable = port ? vrGenSellTable(port) : [];
+
+  // V 추이 데이터
+  const chartData = port ? (port.cycles||[]).map((cy,i)=>({
+    label: `${cy.cycleNo}사이클`, V: cy.endV, Vmin: cy.endV*(1-port.bandPct/100), Vmax: cy.endV*(1+port.bandPct/100), eval: cy.endEval
+  })) : [];
+  if (port && port.currentV) {
+    chartData.push({label:`${port.cycleNo}사이클(현재)`, V: port.currentV, Vmin: Vmin, Vmax: Vmax, eval: evalAmt});
+  }
+
+  const allCycles = ports.flatMap(p=>(p.cycles||[]).map(c=>({...c,ticker:p.ticker})));
+  const totalRealizedProfit = allCycles.reduce((s,c)=>s+(c.profitAmt||0),0);
+
+  return (
+    <div className="space-y-4">
+      {view==='list' && <>
+        <div className="flex border-b border-gray-200">
+          {[['active',`진행중 (${ports.length})`],['history',`이력 (${allCycles.length})`]].map(([k,l])=>(
+            <button key={k} onClick={()=>setMainTab(k)} className={`flex-1 py-2.5 text-sm font-bold transition-all border-b-2 ${mainTab===k?"border-[#1a2744] text-[#1a2744]":"border-transparent text-gray-400"}`}>{l}</button>
+          ))}
+        </div>
+
+        {mainTab==='active' && <div className="space-y-3">
+          <div className="flex justify-end"><Btn size="sm" onClick={()=>{setEditPort(null);setPortForm({ticker:'TQQQ',qty:'',avgPrice:'',startPrice:'',initialPool:'',G:'10',bandPct:'15',poolLimitPct:'75',contribution:'250',startDate:''});setPortModal(true);}}>+ 추가</Btn></div>
+          {ports.length===0&&<Card><div className="text-center py-10 text-gray-400"><p className="text-4xl mb-3">📐</p><p className="text-sm">진행중인 VR 포트가 없습니다</p></div></Card>}
+          {ports.map(p=>{
+            const pV=vrCalcCurrentV(p), pCur=vrCurrency(p.ticker);
+            const pPool=p.pool!=null?p.pool:p.initialPool, pQty=p.currentQty!=null?p.currentQty:p.qty;
+            const pEval=pQty*(p.lastPrice||0), pTotal=pEval+pPool;
+            const pInvested=vrCalcInvested(p), pProfit=pTotal-pInvested;
+            const pPct=pTotal>0?pProfit/pTotal*100:0;
+            const dday=calcDDay(p);
+            return (
+              <div key={p.id} className="bg-white rounded-2xl shadow-sm p-4 cursor-pointer hover:shadow-md transition-all" onClick={()=>{setCurId(p.id);setView('detail');}}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base font-extrabold text-[#1a2744]">{p.ticker}</span>
+                    <span className="text-xs text-gray-400">사이클 {p.cycleNo||1}</span>
+                    {dday&&<span className={`text-xs px-2 py-0.5 rounded-full font-bold ${dday.diff<=0?"bg-red-50 text-red-500":"bg-blue-50 text-blue-500"}`}>{dday.diff<=0?"갱신일!":`D-${dday.diff}`}</span>}
+                  </div>
+                  <span className={`text-sm font-bold ${pPct>=0?"text-green-600":"text-red-500"}`}>{pPct>=0?'+':''}{pPct.toFixed(2)}%</span>
+                </div>
+                <div className="grid grid-cols-4 gap-2 text-xs text-center">
+                  <div className="bg-gray-50 rounded-lg p-2"><p className="text-gray-400">V</p><p className="font-bold text-[#1a2744]">{fmtVRShort(pV,pCur)}</p></div>
+                  <div className="bg-blue-50 rounded-lg p-2"><p className="text-gray-400">Vmin</p><p className="font-bold text-blue-500">{fmtVRShort(pV*(1-p.bandPct/100),pCur)}</p></div>
+                  <div className="bg-red-50 rounded-lg p-2"><p className="text-gray-400">Vmax</p><p className="font-bold text-red-500">{fmtVRShort(pV*(1+p.bandPct/100),pCur)}</p></div>
+                  <div className="bg-green-50 rounded-lg p-2"><p className="text-gray-400">Pool</p><p className="font-bold text-green-600">{fmtVRShort(pPool,pCur)}</p></div>
+                </div>
+              </div>
+            );
+          })}
+        </div>}
+
+        {mainTab==='history' && <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            {allCycles.length>0&&<div className="p-3 rounded-xl bg-green-50 flex-1 mr-3"><p className="text-xs text-gray-400">누적 기록</p><p className="text-sm font-bold text-gray-700">{allCycles.length}사이클 완료</p></div>}
+            <Btn size="sm" onClick={()=>setHistModal(true)}>+ 이력 추가</Btn>
+          </div>
+          {allCycles.length===0&&<Card><p className="text-sm text-gray-400 text-center py-6">완료된 사이클이 없습니다</p></Card>}
+          {[...allCycles].reverse().map(cy=>(
+            <Card key={cy.id} className="mb-2">
+              <div className="flex items-center justify-between mb-2">
+                <div><span className="text-sm font-bold">{cy.ticker}</span><span className="text-xs text-gray-400 ml-2">사이클 {cy.cycleNo}</span><span className="text-xs text-gray-400 ml-2">{cy.startDate} ~ {cy.endDate}</span></div>
+                <div className="text-right"><p className="text-xs text-gray-400">V {fmtVRShort(cy.startV,'USD')} → {fmtVRShort(cy.endV,'USD')}</p></div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                {[['종가',fmtUSD(cy.endPrice)],['평가금',fmtUSD(cy.endEval||0)],['Pool',fmtUSD(cy.endPool||0)]].map(([l,v])=>(
+                  <div key={l} className="bg-gray-50 rounded-lg p-1.5 text-center"><p className="text-gray-400">{l}</p><p className="font-bold text-gray-700">{v}</p></div>
+                ))}
+              </div>
+            </Card>
+          ))}
+        </div>}
+      </>}
+
+      {view==='detail' && port && <div className="space-y-4">
+        {/* 헤더 */}
+        <div className="flex items-center gap-3">
+          <button onClick={()=>setView('list')} className="text-gray-400 hover:text-gray-700 text-lg">←</button>
+          <div className="flex-1 flex items-center gap-2 flex-wrap">
+            <span className="text-lg font-extrabold text-[#1a2744]">{port.ticker}</span>
+            <span className="text-xs text-gray-400">사이클 {port.cycleNo||1}</span>
+            {calcDDay(port)&&<span className={`text-xs px-2 py-0.5 rounded-full font-bold ${calcDDay(port).diff<=0?"bg-red-50 text-red-500 animate-pulse":"bg-blue-50 text-blue-500"}`}>{calcDDay(port).diff<=0?"⚡ 사이클 갱신일!":`D-${calcDDay(port).diff} (${calcDDay(port).date})`}</span>}
+          </div>
+          <div className="flex gap-1">
+            <Btn size="sm" variant="ghost" onClick={()=>openEditPort(port)}>수정</Btn>
+            <Btn size="sm" variant="danger" onClick={()=>setConfirmDelPort(port.id)}>삭제</Btn>
+          </div>
+        </div>
+
+        {/* 현재가 입력 */}
+        <Card className="!p-3">
+          <div className="flex items-center gap-2">
+            <input type="number" value={priceInput} onChange={e=>setPriceInput(e.target.value)} placeholder={`현재가 (${fmtVR(curPrice,currency)})`} className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2744]/30"/>
+            <Btn size="sm" onClick={updatePrice} disabled={!priceInput}>업데이트</Btn>
+          </div>
+        </Card>
+
+        {/* 현황 카드 */}
+        <Card>
+          <SectionTitle>📐 현황</SectionTitle>
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="p-3 rounded-xl bg-[#1a2744]/5 text-center"><p className="text-xs text-gray-400">V (목표)</p><p className="text-base font-extrabold text-[#1a2744]">{fmtVR(V,currency)}</p></div>
+            <div className="p-3 rounded-xl bg-gray-50 text-center"><p className="text-xs text-gray-400">Pool</p><p className="text-base font-extrabold text-green-600">{fmtVR(pool,currency)}</p></div>
+            <div className="p-3 rounded-xl bg-blue-50 text-center"><p className="text-xs text-gray-400">Vmin (매수)</p><p className="text-sm font-bold text-blue-600">{fmtVR(Vmin,currency)}</p></div>
+            <div className="p-3 rounded-xl bg-red-50 text-center"><p className="text-xs text-gray-400">Vmax (매도)</p><p className="text-sm font-bold text-red-500">{fmtVR(Vmax,currency)}</p></div>
+          </div>
+          <div className="space-y-1.5 text-sm">
+            {[['보유수량',currentQty+'주'],['평단가',fmtVR(vrCalcAvgPrice(port),currency)],['현재 평가금',fmtVR(evalAmt,currency)],['전체자산 (평가금+Pool)',fmtVR(totalAsset,currency)],['투자원금',fmtVR(invested,currency)]].map(([l,v])=>(
+              <div key={l} className="flex justify-between border-b border-gray-50 pb-1"><span className="text-gray-400">{l}</span><span className="font-bold text-gray-800">{v}</span></div>
+            ))}
+            <div className="flex justify-between pt-1"><span className="text-gray-500 font-bold">수익률</span><span className={`font-extrabold text-base ${profitPct>=0?"text-green-600":"text-red-500"}`}>{profitPct>=0?'+':''}{profitPct.toFixed(2)}% <span className="text-sm">({fmtVR(profitAmt,currency)})</span></span></div>
+          </div>
+        </Card>
+
+        {/* 다음 V 미리보기 */}
+        <Card className="!p-3 bg-amber-50 border border-amber-100">
+          <p className="text-xs text-amber-600 font-bold mb-1">📅 다음 사이클 V 미리보기</p>
+          <p className="text-sm text-gray-700">V₂ = {fmtVR(V,currency)} + {fmtVR(pool,currency)}/{port.G} + {fmtVR(port.contribution,currency)} = <span className="font-extrabold text-[#1a2744]">{fmtVR(nextV,currency)}</span></p>
+          <p className="text-xs text-gray-400 mt-1">Vmin: {fmtVR(nextV*(1-port.bandPct/100),currency)} / Vmax: {fmtVR(nextV*(1+port.bandPct/100),currency)}</p>
+        </Card>
+
+        {/* 매수/매도 표 */}
+        <Card>
+          <SectionTitle>📊 주문 가이드</SectionTitle>
+          <p className="text-xs text-gray-400 mb-3">Pool 한도: {fmtVR(pool*(port.poolLimitPct/100),currency)} ({port.poolLimitPct}%)</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs font-bold text-blue-600 mb-2">📥 매수표 (Vmin: {fmtVR(Vmin,currency)})</p>
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                {buyTable.length===0&&<p className="text-xs text-gray-400 text-center py-3">Pool 부족</p>}
+                {buyTable.map((r,i)=>(
+                  <div key={i} className={`flex justify-between text-xs px-2 py-1.5 rounded-lg ${i===0?"bg-blue-100 font-bold":"bg-blue-50"}`}>
+                    <span className="text-blue-700">{r.qty}주</span>
+                    <span className="text-blue-800 font-semibold">{fmtVR(r.price,currency)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-bold text-red-500 mb-2">📤 매도표 (Vmax: {fmtVR(Vmax,currency)})</p>
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                {sellTable.length===0&&<p className="text-xs text-gray-400 text-center py-3">보유 없음</p>}
+                {sellTable.map((r,i)=>(
+                  <div key={i} className={`flex justify-between text-xs px-2 py-1.5 rounded-lg ${i===0?"bg-red-100 font-bold":"bg-red-50"}`}>
+                    <span className="text-red-700">{r.qty}주</span>
+                    <span className="text-red-800 font-semibold">{fmtVR(r.price,currency)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        {/* 거래 내역 */}
+        <Card>
+          <div className="flex items-center justify-between mb-3">
+            <SectionTitle>거래 내역 ({(port.trades||[]).length}건)</SectionTitle>
+            <div className="flex gap-1">
+              <Btn size="sm" variant="secondary" onClick={()=>{setParseText('');setParsedTrade(null);setParseModal(true);}}>📱 문자</Btn>
+              <Btn size="sm" onClick={()=>{setTradeForm({date:new Date().toISOString().slice(0,10),type:'매수',price:'',qty:'',memo:''});setTradeModal(true);}}>+ 입력</Btn>
+            </div>
+          </div>
+          {!(port.trades||[]).length&&<p className="text-sm text-gray-400 text-center py-3">거래 없음</p>}
+          <div className="space-y-2">{[...(port.trades||[])].reverse().map(tr=>(
+            <div key={tr.id} className={`flex items-center justify-between p-2.5 rounded-xl ${tr.type==='매수'?"bg-blue-50":"bg-red-50"}`}>
+              <div><div className="flex items-center gap-2"><span className={`text-xs font-bold px-1.5 py-0.5 rounded ${tr.type==='매수'?"bg-blue-200 text-blue-800":"bg-red-200 text-red-800"}`}>{tr.type}</span><span className="text-xs text-gray-400">{tr.date}</span></div>{tr.memo&&<p className="text-xs text-gray-400">{tr.memo}</p>}</div>
+              <div className="flex items-center gap-2"><div className="text-right"><p className="text-sm font-bold">{fmtVR(tr.price,currency)} × {tr.qty}주</p><p className="text-xs text-gray-400">{fmtVR(tr.price*tr.qty,currency)}</p></div><Btn size="sm" variant="danger" onClick={()=>setConfirmDel(tr.id)}>삭제</Btn></div>
+            </div>
+          ))}</div>
+        </Card>
+
+        {/* V 추이 그래프 */}
+        {chartData.length>1&&<Card>
+          <SectionTitle>📈 V 추이</SectionTitle>
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={chartData} margin={{top:5,right:5,bottom:5,left:0}}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/>
+              <XAxis dataKey="label" tick={{fontSize:9}}/>
+              <YAxis tickFormatter={(v)=>fmtVRShort(v,currency)} tick={{fontSize:9}}/>
+              <Tooltip formatter={(v)=>fmtVR(v,currency)}/>
+              <Legend wrapperStyle={{fontSize:10}}/>
+              <Line type="monotone" dataKey="Vmax" stroke="#E85D75" strokeWidth={1} strokeDasharray="4 2" dot={false} name="Vmax"/>
+              <Line type="monotone" dataKey="V" stroke="#1a2744" strokeWidth={2} dot={{fill:"#1a2744",r:3}} name="V"/>
+              <Line type="monotone" dataKey="Vmin" stroke="#4F86C6" strokeWidth={1} strokeDasharray="4 2" dot={false} name="Vmin"/>
+              <Line type="monotone" dataKey="eval" stroke="#82C596" strokeWidth={1.5} dot={false} name="평가금"/>
+            </LineChart>
+          </ResponsiveContainer>
+        </Card>}
+
+        {/* 설정 & 사이클 갱신 */}
+        <Card>
+          <SectionTitle>설정 & 목표치</SectionTitle>
+          <div className="space-y-1.5 text-sm mb-4">
+            {[['G값',port.G],['밴드폭',`±${port.bandPct}%`],['Pool 한도',`${port.poolLimitPct}%`],['적립금',fmtVR(port.contribution,currency)],['시작일',port.startDate]].map(([l,v])=>(
+              <div key={l} className="flex justify-between border-b border-gray-50 pb-1.5"><span className="text-gray-400">{l}</span><span className="font-bold text-gray-700">{v}</span></div>
+            ))}
+          </div>
+          <Btn className="w-full" variant="secondary" onClick={()=>setCycleModal(true)}>↻ 사이클 갱신 (2주 종가 입력)</Btn>
+        </Card>
+      </div>}
+
+      {/* ── 모달들 ── */}
+      <Modal open={portModal} onClose={()=>setPortModal(false)} title={editPort?"포트 수정":"VR 포트 추가"}>
+        <div className="space-y-3">
+          <p className="text-xs text-gray-400">* 미국: TQQQ, QLD 등 / 한국: 6자리 종목코드</p>
+          <div className="grid grid-cols-2 gap-3">
+            <Inp label="티커" value={portForm.ticker} onChange={v=>setPortForm(f=>({...f,ticker:v.toUpperCase()}))} required/>
+            <Inp label="시작일" type="date" value={portForm.startDate} onChange={v=>setPortForm(f=>({...f,startDate:v}))}/>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Inp label="초기 보유수량" type="number" value={portForm.qty} onChange={v=>setPortForm(f=>({...f,qty:v}))} required/>
+            <Inp label="평단가" type="number" value={portForm.avgPrice} onChange={v=>setPortForm(f=>({...f,avgPrice:v}))}/>
+          </div>
+          <Inp label="전일 종가 (초기 V 계산 기준)" type="number" value={portForm.startPrice} onChange={v=>setPortForm(f=>({...f,startPrice:v}))} required/>
+          {portForm.qty&&portForm.startPrice&&<div className="p-2 rounded-lg bg-blue-50 text-xs text-center text-blue-700">초기 V = {portForm.qty} × {portForm.startPrice} + {portForm.initialPool||0} = <span className="font-bold">{fmtVR(Number(portForm.qty)*Number(portForm.startPrice)+Number(portForm.initialPool||0), vrCurrency(portForm.ticker))}</span></div>}
+          <div className="grid grid-cols-2 gap-3">
+            <Inp label="초기 Pool" type="number" value={portForm.initialPool} onChange={v=>setPortForm(f=>({...f,initialPool:v}))}/>
+            <Inp label="적립금 (사이클당)" type="number" value={portForm.contribution} onChange={v=>setPortForm(f=>({...f,contribution:v}))}/>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <Inp label="G값" type="number" value={portForm.G} onChange={v=>setPortForm(f=>({...f,G:v}))}/>
+            <Inp label="밴드폭 (%)" type="number" value={portForm.bandPct} onChange={v=>setPortForm(f=>({...f,bandPct:v}))}/>
+            <Inp label="Pool 한도 (%)" type="number" value={portForm.poolLimitPct} onChange={v=>setPortForm(f=>({...f,poolLimitPct:v}))}/>
+          </div>
+          <div className="flex gap-2 justify-end pt-2"><Btn variant="secondary" onClick={()=>setPortModal(false)}>취소</Btn><Btn onClick={savePort}>저장</Btn></div>
+        </div>
+      </Modal>
+
+      <Modal open={tradeModal} onClose={()=>setTradeModal(false)} title="거래 입력">
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Sel label="구분" value={tradeForm.type} onChange={v=>setTradeForm(f=>({...f,type:v}))} options={[{value:'매수',label:'매수'},{value:'매도',label:'매도'}]}/>
+            <Inp label="날짜" type="date" value={tradeForm.date} onChange={v=>setTradeForm(f=>({...f,date:v}))}/>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Inp label={`가격 (${currency})`} type="number" value={tradeForm.price} onChange={v=>setTradeForm(f=>({...f,price:v}))} required/>
+            <Inp label="수량 (주)" type="number" value={tradeForm.qty} onChange={v=>setTradeForm(f=>({...f,qty:v}))} required/>
+          </div>
+          <Inp label="메모" value={tradeForm.memo} onChange={v=>setTradeForm(f=>({...f,memo:v}))}/>
+          {tradeForm.price&&tradeForm.qty&&<div className="p-2 rounded-lg bg-gray-50 text-xs text-center">거래금액: <span className="font-bold">{fmtVR(Number(tradeForm.price)*Number(tradeForm.qty),currency)}</span></div>}
+          <div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setTradeModal(false)}>취소</Btn><Btn onClick={saveTrade}>저장</Btn></div>
+        </div>
+      </Modal>
+
+      <Modal open={parseModal} onClose={()=>{setParseModal(false);setParseText('');setParsedTrade(null);}} title="체결 문자 입력">
+        <div className="space-y-3">
+          <p className="text-xs text-gray-400">메리츠증권 체결 알림 복사 후 붙여넣기</p>
+          <textarea value={parseText} onChange={e=>setParseText(e.target.value)} placeholder={"[메리츠증권] 해외주식 주문체결 안내
+체결단가 : USD ...
+체결수량 : N주"} className="w-full h-32 border border-gray-200 rounded-xl p-3 text-sm focus:outline-none resize-none"/>
+          {!parsedTrade
+            ?<Btn className="w-full" onClick={handleParse} disabled={!parseText.trim()}>파싱 →</Btn>
+            :<div className="space-y-3">
+              <div className="p-3 rounded-xl bg-gray-50 text-sm space-y-1">
+                {[['구분',parsedTrade.type],['가격',fmtVR(parsedTrade.price,currency)],['수량',parsedTrade.qty+'주'],['날짜',parsedTrade.date],['거래금액',fmtVR(parsedTrade.price*parsedTrade.qty,currency)]].map(([l,v])=>(
+                  <div key={l} className="flex justify-between"><span className="text-gray-400">{l}</span><span className="font-bold">{v}</span></div>
+                ))}
+              </div>
+              <div className="flex gap-2"><Btn variant="secondary" onClick={()=>setParsedTrade(null)} className="flex-1">다시</Btn><Btn onClick={saveParsedTrade} className="flex-1">저장</Btn></div>
+            </div>}
+        </div>
+      </Modal>
+
+      <Modal open={cycleModal} onClose={()=>setCycleModal(false)} title="사이클 갱신">
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">2주차 마지막 날 종가를 입력하면 V가 자동 갱신됩니다.</p>
+          <Inp label={`종가 (${currency})`} type="number" value={cycleEndPrice} onChange={v=>setCycleEndPrice(v)} required/>
+          {cycleEndPrice&&<div className="p-3 rounded-xl bg-amber-50 text-sm space-y-1">
+            <p className="font-bold text-amber-700 mb-2">갱신 미리보기</p>
+            {[['현재 V',fmtVR(V,currency)],['Pool/G',fmtVR(pool/port.G,currency)],['적립금',fmtVR(port.contribution,currency)],['다음 V',fmtVR(nextV,currency)],['다음 Vmin',fmtVR(nextV*(1-port.bandPct/100),currency)],['다음 Vmax',fmtVR(nextV*(1+port.bandPct/100),currency)],['새 Pool',fmtVR(pool+port.contribution,currency)]].map(([l,v])=>(
+              <div key={l} className="flex justify-between text-xs"><span className="text-gray-500">{l}</span><span className="font-bold">{v}</span></div>
+            ))}
+          </div>}
+          <div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setCycleModal(false)}>취소</Btn><Btn onClick={doCycleRenew} disabled={!cycleEndPrice}>갱신</Btn></div>
+        </div>
+      </Modal>
+
+      <Modal open={histModal} onClose={()=>setHistModal(false)} title="이력 수동 추가">
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Inp label="티커" value={histForm.ticker} onChange={v=>setHistForm(f=>({...f,ticker:v.toUpperCase()}))} required/>
+            <Inp label="사이클번호" type="number" value={String(histForm.cycleNo)} onChange={v=>setHistForm(f=>({...f,cycleNo:Number(v)}))}/>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Inp label="시작일" type="date" value={histForm.startDate} onChange={v=>setHistForm(f=>({...f,startDate:v}))}/>
+            <Inp label="종료일" type="date" value={histForm.endDate} onChange={v=>setHistForm(f=>({...f,endDate:v}))}/>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Inp label="시작 V" type="number" value={histForm.startV} onChange={v=>setHistForm(f=>({...f,startV:v}))}/>
+            <Inp label="종료 V" type="number" value={histForm.endV} onChange={v=>setHistForm(f=>({...f,endV:v}))}/>
+          </div>
+          <Inp label="메모" value={histForm.note} onChange={v=>setHistForm(f=>({...f,note:v}))}/>
+          <div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setHistModal(false)}>취소</Btn><Btn onClick={()=>{
+            const cy={id:'cyc'+genId(),ticker:histForm.ticker,cycleNo:histForm.cycleNo,startDate:histForm.startDate,endDate:histForm.endDate,startV:Number(histForm.startV)||0,endV:Number(histForm.endV)||0,note:histForm.note,isManual:true};
+            setData(d=>({...d,vrPorts:[...(d.vrPorts||[]),{id:'vrh_'+genId(),ticker:histForm.ticker,qty:0,avgPrice:0,startPrice:0,initialPool:0,G:10,bandPct:15,poolLimitPct:75,contribution:0,startDate:histForm.startDate,cycleNo:1,currentV:0,pool:0,currentQty:0,lastPrice:0,trades:[],cycles:[cy]}]}]);
+            setHistModal(false);
+          }}>저장</Btn></div>
+        </div>
+      </Modal>
+
+      <Confirm open={!!confirmDel} message="이 거래를 삭제하시겠습니까?" onConfirm={()=>{
+        setData(d=>({...d,vrPorts:d.vrPorts.map(p=>{
+          if(p.id!==curId) return p;
+          const tr=p.trades.find(t=>t.id===confirmDel);
+          if(!tr) return p;
+          const priceDelta=tr.type==='매수'?tr.price*tr.qty:-tr.price*tr.qty;
+          const qtyDelta=tr.type==='매수'?-tr.qty:tr.qty;
+          return {...p,trades:p.trades.filter(t=>t.id!==confirmDel),pool:Math.round(((p.pool||0)+priceDelta)*100)/100,currentQty:(p.currentQty||p.qty)+qtyDelta};
+        })}));
+        setConfirmDel(null);
+      }} onCancel={()=>setConfirmDel(null)}/>
+      <Confirm open={!!confirmDelPort} message="이 VR 포트를 삭제하시겠습니까?" onConfirm={()=>deletePort(confirmDelPort)} onCancel={()=>setConfirmDelPort(null)}/>
+    </div>
+  );
+};
+
 // ─────────────────────────────────────────────
 // 무한매수법 유틸
 // ─────────────────────────────────────────────
@@ -2280,6 +2882,20 @@ const MumuSection = ({ data, setData }) => {
 };
 
 
+const MumuVRTab = ({ data, setData }) => {
+  const [subTab, setSubTab] = useState('mumu'); // mumu | vr
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
+        <button onClick={()=>setSubTab('mumu')} className={`px-5 py-1.5 rounded-lg text-sm font-bold transition-all ${subTab==='mumu'?"bg-white text-[#1a2744] shadow-sm":"text-gray-500"}`}>📈 무한매수</button>
+        <button onClick={()=>setSubTab('vr')} className={`px-5 py-1.5 rounded-lg text-sm font-bold transition-all ${subTab==='vr'?"bg-white text-[#1a2744] shadow-sm":"text-gray-500"}`}>📐 VR</button>
+      </div>
+      {subTab==='mumu' && <MumuSection data={data} setData={setData}/>}
+      {subTab==='vr' && <VRSection data={data} setData={setData}/>}
+    </div>
+  );
+};
+
 const AccountBookSection = ({ data, setData }) => {
   const [activeTab, setActiveTab] = useState(data.members[0]?.id||"");
   const [subTab, setSubTab] = useState("accounts");
@@ -2338,7 +2954,7 @@ const NAV_ITEMS = [
   { key:"assets", label:"자산현황", icon:"🏦" },
   { key:"income", label:"수입/지출", icon:"💰" },
   { key:"balance", label:"재무상태표", icon:"📋" },
-  { key:"mumu", label:"무한매수", icon:"📈" },
+  { key:"mumu", label:"무매/VR", icon:"📈" },
   { key:"accountbook", label:"계좌관리", icon:"📒" },
   { key:"settings", label:"설정", icon:"⚙️" },
 ];
@@ -2431,7 +3047,7 @@ export default function App() {
             {activeNav==="assets"&&<AssetsSection data={data} setData={setData2}/>}
             {activeNav==="income"&&<IncomeExpenseSection data={data} setData={setData2}/>}
             {activeNav==="balance"&&<BalanceSheetSection data={data} setData={setData2}/>}
-            {activeNav==="mumu"&&<MumuSection data={data} setData={setData2}/>}
+            {activeNav==="mumu"&&<MumuVRTab data={data} setData={setData2}/>}
             {activeNav==="accountbook"&&<AccountBookSection data={data} setData={setData2}/>}
             {activeNav==="settings"&&<SettingsSection data={data} setData={setData2}/>}
           </div>
