@@ -2343,7 +2343,7 @@ const VRSection = ({ data, setData }) => {
           <Inp label="메모" value={histForm.note} onChange={v=>setHistForm(f=>({...f,note:v}))}/>
           <div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setHistModal(false)}>취소</Btn><Btn onClick={()=>{
             const cy={id:'cyc'+genId(),ticker:histForm.ticker,cycleNo:histForm.cycleNo,startDate:histForm.startDate,endDate:histForm.endDate,startV:Number(histForm.startV)||0,endV:Number(histForm.endV)||0,note:histForm.note,isManual:true};
-            setData(d=>({...d,vrPorts:[...(d.vrPorts||[]),{id:'vrh_'+genId(),ticker:histForm.ticker,qty:0,avgPrice:0,startPrice:0,initialPool:0,G:10,bandPct:15,poolLimitPct:75,contribution:0,startDate:histForm.startDate,cycleNo:1,currentV:0,pool:0,currentQty:0,lastPrice:0,trades:[],cycles:[cy]}]}]);
+            setData(d=>({...d,vrPorts:[...(d.vrPorts||[]),{id:'vrh_'+genId(),ticker:histForm.ticker,qty:0,avgPrice:0,startPrice:0,initialPool:0,G:10,bandPct:15,poolLimitPct:75,contribution:0,startDate:histForm.startDate,cycleNo:1,currentV:0,pool:0,currentQty:0,lastPrice:0,trades:[],cycles:[cy]}]}));
             setHistModal(false);
           }}>저장</Btn></div>
         </div>
