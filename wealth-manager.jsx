@@ -2298,9 +2298,7 @@ const VRSection = ({ data, setData }) => {
       <Modal open={parseModal} onClose={()=>{setParseModal(false);setParseText('');setParsedTrade(null);}} title="체결 문자 입력">
         <div className="space-y-3">
           <p className="text-xs text-gray-400">메리츠증권 체결 알림 복사 후 붙여넣기</p>
-          <textarea value={parseText} onChange={e=>setParseText(e.target.value)} placeholder={"[메리츠증권] 해외주식 주문체결 안내
-체결단가 : USD ...
-체결수량 : N주"} className="w-full h-32 border border-gray-200 rounded-xl p-3 text-sm focus:outline-none resize-none"/>
+          <textarea value={parseText} onChange={e=>setParseText(e.target.value)} placeholder={"[메리츠증권] 해외주식 주문체결 안내\n체결단가 : USD ...\n체결수량 : N주"} className="w-full h-32 border border-gray-200 rounded-xl p-3 text-sm focus:outline-none resize-none"/>
           {!parsedTrade
             ?<Btn className="w-full" onClick={handleParse} disabled={!parseText.trim()}>파싱 →</Btn>
             :<div className="space-y-3">
