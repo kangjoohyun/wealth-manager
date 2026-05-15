@@ -1994,8 +1994,7 @@ const VRSection = ({ data, setData }) => {
   };
 
   const parseMsgText = (text) => {
-    const lines = text.split('
-').map(l=>l.trim());
+    const lines = text.split('\n').map(l=>l.trim());
     const get = (key) => { const l = lines.find(l=>l.startsWith(key)); return l?l.split(':').slice(1).join(':').trim():''; };
     const typeStr = get('매매구분');
     const priceStr = (get('체결단가')||'').replace(/USD\s*/i,'').replace(/KRW\s*/i,'').trim();
