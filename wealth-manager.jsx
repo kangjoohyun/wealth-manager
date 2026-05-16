@@ -2109,19 +2109,26 @@ const VRSection = ({ data, setData }) => {
             <Btn size="sm" onClick={()=>setHistModal(true)}>+ 이력 추가</Btn>
           </div>
           {allCycles.length===0&&<Card><p className="text-sm text-gray-400 text-center py-6">완료된 사이클이 없습니다</p></Card>}
-          {[...allCycles].reverse().map(cy=>(
-            <Card key={cy.id} className="mb-2">
-              <div className="flex items-center justify-between mb-2">
-                <div><span className="text-sm font-bold">{cy.ticker}</span><span className="text-xs text-gray-400 ml-2">사이클 {cy.cycleNo}</span><span className="text-xs text-gray-400 ml-2">{cy.startDate} ~ {cy.endDate}</span></div>
-                <div className="text-right"><p className="text-xs text-gray-400">V {fmtVRShort(cy.startV,'USD')} → {fmtVRShort(cy.endV,'USD')}</p></div>
-              </div>
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                {[['종가',fmtUSD(cy.endPrice)],['평가금',fmtUSD(cy.endEval||0)],['Pool',fmtUSD(cy.endPool||0)]].map(([l,v])=>(
-                  <div key={l} className="bg-gray-50 rounded-lg p-1.5 text-center"><p className="text-gray-400">{l}</p><p className="font-bold text-gray-700">{v}</p></div>
-                ))}
-              </div>
-            </Card>
-          ))}
+          {[...allCycles].sort((a,b)=>(b.endDate||'').localeCompare(a.endDate||'')).map(cy=>{
+            const cyPort = ports.find(p=>p.id===cy.portId);
+            const cyC = vrCurrency(cy.ticker);
+            return (
+              <Card key={cy.id} className="mb-2">
+                <div className="flex items-center justify-between mb-2">
+                  <div><span className="text-sm font-bold">{cy.ticker}</span><span className="text-xs text-gray-400 ml-2">사이클 {cy.cycleNo}</span><span className="text-xs text-gray-400 ml-2">{cy.startDate} ~ {cy.endDate}</span></div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs text-gray-400">V {fmtVRShort(cy.startV,cyC)} → {fmtVRShort(cy.endV,cyC)}</p>
+                    <Btn size="sm" variant="ghost" onClick={()=>{setVrEditHistId(cy.id);setHistForm({ticker:cy.ticker||'',startDate:cy.startDate||'',endDate:cy.endDate||'',cycleNo:cy.cycleNo||1,startV:String(cy.startV||''),endV:String(cy.endV||''),note:cy.note||''});setHistModal(true);}}>✏️</Btn>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  {[['종가',cy.endPrice?fmtVR(cy.endPrice,cyC):'-'],['평가금',cy.endEval?fmtVR(cy.endEval,cyC):'-'],['Pool',cy.endPool?fmtVR(cy.endPool,cyC):'-']].map(([l,v])=>(
+                    <div key={l} className="bg-gray-50 rounded-lg p-1.5 text-center"><p className="text-gray-400">{l}</p><p className="font-bold text-gray-700">{v}</p></div>
+                  ))}
+                </div>
+              </Card>
+            );
+          })}
         </div>}
       </>}
 
@@ -2326,7 +2333,7 @@ const VRSection = ({ data, setData }) => {
         </div>
       </Modal>
 
-      <Modal open={histModal} onClose={()=>setHistModal(false)} title="이력 수동 추가">
+      <Modal open={histModal} onClose={()=>{setHistModal(false);setEditHistId(null);}} title={editHistId?"이력 수정":"이력 수동 추가"}>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Inp label="티커" value={histForm.ticker} onChange={v=>setHistForm(f=>({...f,ticker:v.toUpperCase()}))} required/>
@@ -2437,6 +2444,7 @@ const MumuSection = ({ data, setData }) => {
   // 이력 수동 추가
   const [histModal, setHistModal] = useState(false);
   const [histForm, setHistForm] = useState({portId:'',ticker:'',nickname:'',startDate:'',endDate:'',seed:'',splits:'40',reason:'',profitAmt:'',profitPct:''});
+  const [editHistId, setEditHistId] = useState(null);
 
   // 삭제 확인
   const [confirmDel, setConfirmDel] = useState(null);
@@ -2480,7 +2488,24 @@ const MumuSection = ({ data, setData }) => {
     } else {
       sells.push({label:'MOC 매도', price:curPrice, qty:Math.ceil(holdings*(1/(port.splits===20?10:20)))});
     }
-    return {buys,sells};
+    // 폭락대비 추가 LOC 계산
+    const totalGuideQty = buys.reduce((s,b)=>s+b.qty, 0);
+    const crashLocs = [];
+    if (totalGuideQty > 0 && unitBuy > 0) {
+      const lastCyclePrice = port.recentPrices?.length >= 2
+        ? port.recentPrices[port.recentPrices.length - 2]
+        : (curPrice * 1.2); // 직전 종가 없으면 현재가*1.2 추정
+      const priceFloor = lastCyclePrice * 0.5;
+      let n = 1;
+      while (n <= 50) {
+        const addQty = totalGuideQty + n;
+        const addPrice = Math.round((unitBuy / addQty) * 100) / 100;
+        if (addPrice <= priceFloor) break;
+        crashLocs.push({ price: addPrice, qty: 1 });
+        n++;
+      }
+    }
+    return {buys, sells, crashLocs};
   };
   const guide = getGuide();
 
@@ -2573,9 +2598,15 @@ const MumuSection = ({ data, setData }) => {
 
   // 이력 수동 추가
   const saveHist = () => {
-    const cy = {id:'cy'+genId(),portId:histForm.portId||'manual',cycleNo:cycles.length+1,ticker:histForm.ticker,nickname:histForm.nickname,seed:Number(histForm.seed)||0,splits:Number(histForm.splits)||40,startDate:histForm.startDate,endDate:histForm.endDate,reason:histForm.reason||'수동입력',trades:[],finalT:0,finalAvg:0,finalHoldings:0,buyTotal:0,sellTotal:0,profitAmt:Number(histForm.profitAmt)||0,profitPct:Number(histForm.profitPct)||0,remaining:0};
-    setData(d=>({...d,mumuCycles:[...(d.mumuCycles||[]),cy]}));
-    setHistModal(false); setHistForm({portId:'',ticker:'',nickname:'',startDate:'',endDate:'',seed:'',splits:'40',reason:'',profitAmt:'',profitPct:''});
+    if (editHistId) {
+      // 수정
+      setData(d=>({...d,mumuCycles:(d.mumuCycles||[]).map(c=>c.id===editHistId?{...c,ticker:histForm.ticker,nickname:histForm.nickname,seed:Number(histForm.seed)||0,splits:Number(histForm.splits)||40,startDate:histForm.startDate,endDate:histForm.endDate,reason:histForm.reason||'수동입력',profitAmt:Number(histForm.profitAmt)||0,profitPct:Number(histForm.profitPct)||0}:c)}));
+    } else {
+      // 신규
+      const cy = {id:'cy'+genId(),portId:histForm.portId||'manual',cycleNo:cycles.length+1,ticker:histForm.ticker,nickname:histForm.nickname,seed:Number(histForm.seed)||0,splits:Number(histForm.splits)||40,startDate:histForm.startDate,endDate:histForm.endDate,reason:histForm.reason||'수동입력',trades:[],finalT:0,finalAvg:0,finalHoldings:0,buyTotal:0,sellTotal:0,profitAmt:Number(histForm.profitAmt)||0,profitPct:Number(histForm.profitPct)||0,remaining:0};
+      setData(d=>({...d,mumuCycles:[...(d.mumuCycles||[]),cy]}));
+    }
+    setHistModal(false); setEditHistId(null); setHistForm({portId:'',ticker:'',nickname:'',startDate:'',endDate:'',seed:'',splits:'40',reason:'',profitAmt:'',profitPct:''});
   };
 
   // 누적 실현 손익
@@ -2628,10 +2659,11 @@ const MumuSection = ({ data, setData }) => {
             <Btn size="sm" onClick={()=>setHistModal(true)}>+ 이력 추가</Btn>
           </div>
           {cycles.length===0&&<Card><p className="text-sm text-gray-400 text-center py-6">완료된 사이클이 없습니다</p></Card>}
-          {/* 포트별 그룹 */}
+          {/* 날짜 기준 내림차순 정렬 */}
           {(() => {
+            const sorted = [...cycles].sort((a,b)=>(b.endDate||'').localeCompare(a.endDate||''));
             const grouped = {};
-            cycles.forEach(cy => {
+            sorted.forEach(cy => {
               const key = cy.portId+'_'+cy.ticker+'_'+(cy.nickname||'');
               if (!grouped[key]) grouped[key] = {ticker:cy.ticker,nickname:cy.nickname,cycles:[]};
               grouped[key].cycles.push(cy);
@@ -2639,18 +2671,21 @@ const MumuSection = ({ data, setData }) => {
             return Object.values(grouped).map((g,gi)=>(
               <div key={gi}>
                 <p className="text-xs font-bold text-gray-500 mb-2">{g.ticker} {g.nickname&&`· ${g.nickname}`}</p>
-                {[...g.cycles].reverse().map(cy=>(
+                {g.cycles.map(cy=>(
                   <Card key={cy.id} className="mb-2">
                     <div className="flex items-center justify-between mb-2">
                       <div>
                         <span className="text-sm font-bold text-gray-800">사이클 {cy.cycleNo}</span>
                         <span className="text-xs text-gray-400 ml-2">{cy.startDate} ~ {cy.endDate}</span>
-                        <span className={`text-xs ml-2 px-1.5 py-0.5 rounded-full ${cy.reason==='수동입력'?'bg-gray-100 text-gray-500':'bg-blue-50 text-blue-500'}`}>{cy.reason}</span>
+                        <span className={`text-xs ml-2 px-1.5 py-0.5 rounded-full ${cy.reason==='수동입력'||cy.reason==='수동입력'?'bg-gray-100 text-gray-500':'bg-blue-50 text-blue-500'}`}>{cy.reason}</span>
                       </div>
-                      <span className={`text-sm font-extrabold ${cy.profitAmt>=0?"text-green-600":"text-red-500"}`}>{cy.profitAmt>=0?'+':''}{fmtUSD(cy.profitAmt)} <span className="text-xs">({cy.profitPct>=0?'+':''}{cy.profitPct.toFixed(2)}%)</span></span>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-sm font-extrabold ${cy.profitAmt>=0?"text-green-600":"text-red-500"}`}>{cy.profitAmt>=0?'+':''}{fmtUSD(cy.profitAmt)} <span className="text-xs">({cy.profitPct>=0?'+':''}{cy.profitPct.toFixed(2)}%)</span></span>
+                        <Btn size="sm" variant="ghost" onClick={()=>{setHistForm({portId:cy.portId||'',ticker:cy.ticker||'',nickname:cy.nickname||'',startDate:cy.startDate||'',endDate:cy.endDate||'',seed:String(cy.seed||''),splits:String(cy.splits||40),reason:cy.reason||'',profitAmt:String(cy.profitAmt||''),profitPct:String(cy.profitPct||'')});setEditHistId(cy.id);setHistModal(true);}}>✏️</Btn>
+                      </div>
                     </div>
                     <div className="grid grid-cols-3 gap-2 text-xs">
-                      {[['시드',fmtUSD(cy.seed,0)],['분할',cy.splits+'분할'],['거래',cy.trades?.length+'건']].map(([l,v])=>(
+                      {[['시드',fmtUSD(cy.seed||0,0)],['분할',(cy.splits||'-')+'분할'],['거래',(cy.trades?.length||0)+'건']].map(([l,v])=>(
                         <div key={l} className="bg-gray-50 rounded-lg p-1.5 text-center"><p className="text-gray-400">{l}</p><p className="font-bold text-gray-600">{v}</p></div>
                       ))}
                     </div>
