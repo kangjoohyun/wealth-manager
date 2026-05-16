@@ -1886,7 +1886,8 @@ const VRSection = ({ data, setData }) => {
   const [editPort, setEditPort] = useState(null);
   const [portForm, setPortForm] = useState({
     ticker:'TQQQ', nickname:'', qty:'', avgPrice:'', startPrice:'', initialPool:'',
-    G:'10', bandPct:'15', poolLimitPct:'75', contribution:'250', startDate:''
+    G:'10', bandPct:'15', poolLimitPct:'75', contribution:'250', startDate:'',
+    currentPool:'', currentQty:''
   });
 
   // 거래 모달
@@ -1959,8 +1960,8 @@ const VRSection = ({ data, setData }) => {
       cycleStartDate: portForm.startDate,
       cycleNo: editPort?.cycleNo || 1,
       currentV: editPort?.currentV || initV,
-      pool: editPort?.pool != null ? editPort.pool : initialPool,
-      currentQty: editPort?.currentQty != null ? editPort.currentQty : qty,
+      pool: portForm.currentPool!=='' ? Number(portForm.currentPool) : (editPort?.pool != null ? editPort.pool : initialPool),
+      currentQty: portForm.currentQty!=='' ? Number(portForm.currentQty) : (editPort?.currentQty != null ? editPort.currentQty : qty),
       lastPrice: editPort?.lastPrice || startPrice,
       trades: editPort?.trades || [],
       cycles: editPort?.cycles || [],
@@ -1972,7 +1973,7 @@ const VRSection = ({ data, setData }) => {
 
   const openEditPort = (p) => {
     setEditPort(p);
-    setPortForm({ticker:p.ticker,nickname:p.nickname||'',qty:String(p.qty),avgPrice:String(p.avgPrice),startPrice:String(p.startPrice),initialPool:String(p.initialPool),G:String(p.G),bandPct:String(p.bandPct),poolLimitPct:String(p.poolLimitPct),contribution:String(p.contribution),startDate:p.startDate});
+    setPortForm({ticker:p.ticker,nickname:p.nickname||'',qty:String(p.qty),avgPrice:String(p.avgPrice),startPrice:String(p.startPrice),initialPool:String(p.initialPool),G:String(p.G),bandPct:String(p.bandPct),poolLimitPct:String(p.poolLimitPct),contribution:String(p.contribution),startDate:p.startDate,currentPool:String(p.pool!=null?p.pool:p.initialPool),currentQty:String(p.currentQty!=null?p.currentQty:p.qty)});
     setPortModal(true);
   };
 
@@ -2074,7 +2075,7 @@ const VRSection = ({ data, setData }) => {
         </div>
 
         {mainTab==='active' && <div className="space-y-3">
-          <div className="flex justify-end"><Btn size="sm" onClick={()=>{setEditPort(null);setPortForm({ticker:'TQQQ',nickname:'',qty:'',avgPrice:'',startPrice:'',initialPool:'',G:'10',bandPct:'15',poolLimitPct:'75',contribution:'250',startDate:''});setPortModal(true);}}>+ 추가</Btn></div>
+          <div className="flex justify-end"><Btn size="sm" onClick={()=>{setEditPort(null);setPortForm({ticker:'TQQQ',nickname:'',qty:'',avgPrice:'',startPrice:'',initialPool:'',G:'10',bandPct:'15',poolLimitPct:'75',contribution:'250',startDate:'',currentPool:'',currentQty:''});setPortModal(true);}}>+ 추가</Btn></div>
           {ports.length===0&&<Card><div className="text-center py-10 text-gray-400"><p className="text-4xl mb-3">📐</p><p className="text-sm">진행중인 VR 포트가 없습니다</p></div></Card>}
           {ports.map(p=>{
             const pV=vrCalcCurrentV(p), pCur=vrCurrency(p.ticker);
@@ -2289,6 +2290,14 @@ const VRSection = ({ data, setData }) => {
             <Inp label="밴드폭 (%)" type="number" value={portForm.bandPct} onChange={v=>setPortForm(f=>({...f,bandPct:v}))}/>
             <Inp label="Pool 한도 (%)" type="number" value={portForm.poolLimitPct} onChange={v=>setPortForm(f=>({...f,poolLimitPct:v}))}/>
           </div>
+          {editPort&&<div className="p-3 rounded-xl bg-amber-50 border border-amber-100 space-y-2">
+            <p className="text-xs font-bold text-amber-700">현재 운용 현황 수정</p>
+            <div className="grid grid-cols-2 gap-3">
+              <Inp label="현재 Pool" type="number" value={portForm.currentPool} onChange={v=>setPortForm(f=>({...f,currentPool:v}))}/>
+              <Inp label="현재 보유수량" type="number" value={portForm.currentQty} onChange={v=>setPortForm(f=>({...f,currentQty:v}))}/>
+            </div>
+            <p className="text-xs text-amber-600">* 매수/매도표가 이 값 기준으로 재계산됩니다</p>
+          </div>}
           <div className="flex gap-2 justify-end pt-2"><Btn variant="secondary" onClick={()=>setPortModal(false)}>취소</Btn><Btn onClick={savePort}>저장</Btn></div>
         </div>
       </Modal>
