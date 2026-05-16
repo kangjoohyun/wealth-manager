@@ -1912,6 +1912,7 @@ const VRSection = ({ data, setData }) => {
   // 이력 추가
   const [histModal, setHistModal] = useState(false);
   const [histForm, setHistForm] = useState({ticker:'',startDate:'',endDate:'',cycleNo:1,startV:'',endV:'',profitAmt:'',profitPct:'',note:''});
+  const [vrEditHistId, setVrEditHistId] = useState(null);
 
   const port = ports.find(p=>p.id===curId);
   const currency = port ? vrCurrency(port.ticker) : 'USD';
@@ -2333,7 +2334,7 @@ const VRSection = ({ data, setData }) => {
         </div>
       </Modal>
 
-      <Modal open={histModal} onClose={()=>{setHistModal(false);setEditHistId(null);}} title={editHistId?"이력 수정":"이력 수동 추가"}>
+      <Modal open={histModal} onClose={()=>{setHistModal(false);setVrEditHistId(null);}} title={vrEditHistId?"이력 수정":"이력 수동 추가"}>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Inp label="티커" value={histForm.ticker} onChange={v=>setHistForm(f=>({...f,ticker:v.toUpperCase()}))} required/>
@@ -2348,11 +2349,18 @@ const VRSection = ({ data, setData }) => {
             <Inp label="종료 V" type="number" value={histForm.endV} onChange={v=>setHistForm(f=>({...f,endV:v}))}/>
           </div>
           <Inp label="메모" value={histForm.note} onChange={v=>setHistForm(f=>({...f,note:v}))}/>
-          <div className="flex gap-2 justify-end"><Btn variant="secondary" onClick={()=>setHistModal(false)}>취소</Btn><Btn onClick={()=>{
-            const cy={id:'cyc'+genId(),ticker:histForm.ticker,cycleNo:histForm.cycleNo,startDate:histForm.startDate,endDate:histForm.endDate,startV:Number(histForm.startV)||0,endV:Number(histForm.endV)||0,note:histForm.note,isManual:true};
-            setData(d=>({...d,vrPorts:[...(d.vrPorts||[]),{id:'vrh_'+genId(),ticker:histForm.ticker,qty:0,avgPrice:0,startPrice:0,initialPool:0,G:10,bandPct:15,poolLimitPct:75,contribution:0,startDate:histForm.startDate,cycleNo:1,currentV:0,pool:0,currentQty:0,lastPrice:0,trades:[],cycles:[cy]}]}));
-            setHistModal(false);
-          }}>저장</Btn></div>
+          <div className="flex gap-2 justify-end">
+            <Btn variant="secondary" onClick={()=>{setHistModal(false);setVrEditHistId(null);}}>취소</Btn>
+            <Btn onClick={()=>{
+              if (vrEditHistId) {
+                setData(d=>({...d,vrPorts:(d.vrPorts||[]).map(p=>({...p,cycles:(p.cycles||[]).map(c=>c.id===vrEditHistId?{...c,ticker:histForm.ticker,cycleNo:histForm.cycleNo,startDate:histForm.startDate,endDate:histForm.endDate,startV:Number(histForm.startV)||0,endV:Number(histForm.endV)||0,note:histForm.note}:c)}))}));
+              } else {
+                const cy={id:'cyc'+genId(),ticker:histForm.ticker,cycleNo:histForm.cycleNo,startDate:histForm.startDate,endDate:histForm.endDate,startV:Number(histForm.startV)||0,endV:Number(histForm.endV)||0,note:histForm.note,isManual:true};
+                setData(d=>({...d,vrPorts:[...(d.vrPorts||[]),{id:'vrh_'+genId(),ticker:histForm.ticker,qty:0,avgPrice:0,startPrice:0,initialPool:0,G:10,bandPct:15,poolLimitPct:75,contribution:0,startDate:histForm.startDate,cycleNo:1,currentV:0,pool:0,currentQty:0,lastPrice:0,trades:[],cycles:[cy]}]}));
+              }
+              setHistModal(false); setVrEditHistId(null);
+            }}>저장</Btn>
+          </div>
         </div>
       </Modal>
 
