@@ -1885,7 +1885,7 @@ const VRSection = ({ data, setData }) => {
   const [portModal, setPortModal] = useState(false);
   const [editPort, setEditPort] = useState(null);
   const [portForm, setPortForm] = useState({
-    ticker:'TQQQ', qty:'', avgPrice:'', startPrice:'', initialPool:'',
+    ticker:'TQQQ', nickname:'', qty:'', avgPrice:'', startPrice:'', initialPool:'',
     G:'10', bandPct:'15', poolLimitPct:'75', contribution:'250', startDate:''
   });
 
@@ -1950,7 +1950,7 @@ const VRSection = ({ data, setData }) => {
     const initV = qty * startPrice + initialPool;
     const np = {
       id: editPort?.id || 'vr_'+genId(),
-      ticker, qty, avgPrice, startPrice, initialPool,
+      ticker, nickname: portForm.nickname||'', qty, avgPrice, startPrice, initialPool,
       G: Number(portForm.G)||10,
       bandPct: Number(portForm.bandPct)||15,
       poolLimitPct: Number(portForm.poolLimitPct)||75,
@@ -1972,7 +1972,7 @@ const VRSection = ({ data, setData }) => {
 
   const openEditPort = (p) => {
     setEditPort(p);
-    setPortForm({ticker:p.ticker,qty:String(p.qty),avgPrice:String(p.avgPrice),startPrice:String(p.startPrice),initialPool:String(p.initialPool),G:String(p.G),bandPct:String(p.bandPct),poolLimitPct:String(p.poolLimitPct),contribution:String(p.contribution),startDate:p.startDate});
+    setPortForm({ticker:p.ticker,nickname:p.nickname||'',qty:String(p.qty),avgPrice:String(p.avgPrice),startPrice:String(p.startPrice),initialPool:String(p.initialPool),G:String(p.G),bandPct:String(p.bandPct),poolLimitPct:String(p.poolLimitPct),contribution:String(p.contribution),startDate:p.startDate});
     setPortModal(true);
   };
 
@@ -2074,7 +2074,7 @@ const VRSection = ({ data, setData }) => {
         </div>
 
         {mainTab==='active' && <div className="space-y-3">
-          <div className="flex justify-end"><Btn size="sm" onClick={()=>{setEditPort(null);setPortForm({ticker:'TQQQ',qty:'',avgPrice:'',startPrice:'',initialPool:'',G:'10',bandPct:'15',poolLimitPct:'75',contribution:'250',startDate:''});setPortModal(true);}}>+ 추가</Btn></div>
+          <div className="flex justify-end"><Btn size="sm" onClick={()=>{setEditPort(null);setPortForm({ticker:'TQQQ',nickname:'',qty:'',avgPrice:'',startPrice:'',initialPool:'',G:'10',bandPct:'15',poolLimitPct:'75',contribution:'250',startDate:''});setPortModal(true);}}>+ 추가</Btn></div>
           {ports.length===0&&<Card><div className="text-center py-10 text-gray-400"><p className="text-4xl mb-3">📐</p><p className="text-sm">진행중인 VR 포트가 없습니다</p></div></Card>}
           {ports.map(p=>{
             const pV=vrCalcCurrentV(p), pCur=vrCurrency(p.ticker);
@@ -2086,8 +2086,9 @@ const VRSection = ({ data, setData }) => {
             return (
               <div key={p.id} className="bg-white rounded-2xl shadow-sm p-4 cursor-pointer hover:shadow-md transition-all" onClick={()=>{setCurId(p.id);setView('detail');}}>
                 <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-base font-extrabold text-[#1a2744]">{p.ticker}</span>
+                    {p.nickname&&<span className="text-sm text-gray-500">{p.nickname}</span>}
                     <span className="text-xs text-gray-400">사이클 {p.cycleNo||1}</span>
                     {dday&&<span className={`text-xs px-2 py-0.5 rounded-full font-bold ${dday.diff<=0?"bg-red-50 text-red-500":"bg-blue-50 text-blue-500"}`}>{dday.diff<=0?"갱신일!":`D-${dday.diff}`}</span>}
                   </div>
@@ -2139,6 +2140,7 @@ const VRSection = ({ data, setData }) => {
           <button onClick={()=>setView('list')} className="text-gray-400 hover:text-gray-700 text-lg">←</button>
           <div className="flex-1 flex items-center gap-2 flex-wrap">
             <span className="text-lg font-extrabold text-[#1a2744]">{port.ticker}</span>
+            {port.nickname&&<span className="text-sm text-gray-500">{port.nickname}</span>}
             <span className="text-xs text-gray-400">사이클 {port.cycleNo||1}</span>
             {calcDDay(port)&&<span className={`text-xs px-2 py-0.5 rounded-full font-bold ${calcDDay(port).diff<=0?"bg-red-50 text-red-500 animate-pulse":"bg-blue-50 text-blue-500"}`}>{calcDDay(port).diff<=0?"⚡ 사이클 갱신일!":`D-${calcDDay(port).diff} (${calcDDay(port).date})`}</span>}
           </div>
@@ -2266,7 +2268,11 @@ const VRSection = ({ data, setData }) => {
           <p className="text-xs text-gray-400">* 미국: TQQQ, QLD 등 / 한국: 6자리 종목코드</p>
           <div className="grid grid-cols-2 gap-3">
             <Inp label="티커" value={portForm.ticker} onChange={v=>setPortForm(f=>({...f,ticker:v.toUpperCase()}))} required/>
+            <Inp label="닉네임" value={portForm.nickname} onChange={v=>setPortForm(f=>({...f,nickname:v}))} placeholder="예: 미래에셋ISA"/>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <Inp label="시작일" type="date" value={portForm.startDate} onChange={v=>setPortForm(f=>({...f,startDate:v}))}/>
+            <div/>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Inp label="초기 보유수량" type="number" value={portForm.qty} onChange={v=>setPortForm(f=>({...f,qty:v}))} required/>
