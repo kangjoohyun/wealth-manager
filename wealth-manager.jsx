@@ -1826,16 +1826,18 @@ const vrGenBuyTable = (port) => {
   const pool = port.pool != null ? port.pool : port.initialPool;
   const poolLimit = pool * (port.poolLimitPct/100);
   const qty = port.currentQty != null ? port.currentQty : port.qty;
+  const unit = port.tradeUnit || 1;
   const rows = [];
   let usedPool = 0;
   let n = 1;
   while (usedPool < poolLimit) {
-    const buyPrice = Math.round((Vmin / (qty + n - 1)) * 100) / 100;
+    const newQty = qty + (n - 1) * unit;
+    const buyPrice = Math.round((Vmin / newQty) * 100) / 100;
     if (buyPrice <= 0) break;
-    usedPool += buyPrice;
-    rows.push({ qty: qty+n, price: buyPrice, pool: Math.round((poolLimit - usedPool)*100)/100 });
+    usedPool += buyPrice * unit;
+    rows.push({ qty: newQty + unit, price: buyPrice, unitQty: unit, pool: Math.round((poolLimit - usedPool)*100)/100 });
     n++;
-    if (n > 200) break; // 안전장치
+    if (n > 200) break;
   }
   return rows;
 };
@@ -1844,11 +1846,14 @@ const vrGenSellTable = (port) => {
   const V = vrCalcCurrentV(port);
   const Vmax = V * (1 + port.bandPct/100);
   const qty = port.currentQty != null ? port.currentQty : port.qty;
+  const unit = port.tradeUnit || 1;
   const rows = [];
-  for (let n = 1; n <= qty && n <= 100; n++) {
-    const sellPrice = Math.round((Vmax / (qty - n + 1)) * 100) / 100;
-    const poolAfter = (port.pool||0) + sellPrice;
-    rows.push({ qty: qty-n, price: sellPrice, pool: Math.round(poolAfter*100)/100 });
+  let cumPool = port.pool || 0;
+  for (let n = 1; n * unit <= qty && n <= 100; n++) {
+    const newQty = qty - (n-1)*unit;
+    const sellPrice = Math.round((Vmax / newQty) * 100) / 100;
+    cumPool += sellPrice * unit;
+    rows.push({ qty: newQty - unit, price: sellPrice, unitQty: unit, pool: Math.round(cumPool*100)/100 });
   }
   return rows;
 };
@@ -1887,7 +1892,7 @@ const VRSection = ({ data, setData }) => {
   const [portForm, setPortForm] = useState({
     ticker:'TQQQ', nickname:'', qty:'', avgPrice:'', startPrice:'', initialPool:'',
     G:'10', bandPct:'15', poolLimitPct:'75', contribution:'250', startDate:'',
-    currentPool:'', currentQty:''
+    currentPool:'', currentQty:'', tradeUnit:'1'
   });
 
   // 거래 모달
@@ -1962,6 +1967,7 @@ const VRSection = ({ data, setData }) => {
       currentV: editPort?.currentV || initV,
       pool: portForm.currentPool!=='' ? Number(portForm.currentPool) : (editPort?.pool != null ? editPort.pool : initialPool),
       currentQty: portForm.currentQty!=='' ? Number(portForm.currentQty) : (editPort?.currentQty != null ? editPort.currentQty : qty),
+      tradeUnit: Number(portForm.tradeUnit)||1,
       lastPrice: editPort?.lastPrice || startPrice,
       trades: editPort?.trades || [],
       cycles: editPort?.cycles || [],
@@ -1973,7 +1979,7 @@ const VRSection = ({ data, setData }) => {
 
   const openEditPort = (p) => {
     setEditPort(p);
-    setPortForm({ticker:p.ticker,nickname:p.nickname||'',qty:String(p.qty),avgPrice:String(p.avgPrice),startPrice:String(p.startPrice),initialPool:String(p.initialPool),G:String(p.G),bandPct:String(p.bandPct),poolLimitPct:String(p.poolLimitPct),contribution:String(p.contribution),startDate:p.startDate,currentPool:String(p.pool!=null?p.pool:p.initialPool),currentQty:String(p.currentQty!=null?p.currentQty:p.qty)});
+    setPortForm({ticker:p.ticker,nickname:p.nickname||'',qty:String(p.qty),avgPrice:String(p.avgPrice),startPrice:String(p.startPrice),initialPool:String(p.initialPool),G:String(p.G),bandPct:String(p.bandPct),poolLimitPct:String(p.poolLimitPct),contribution:String(p.contribution),startDate:p.startDate,currentPool:String(p.pool!=null?p.pool:p.initialPool),currentQty:String(p.currentQty!=null?p.currentQty:p.qty),tradeUnit:String(p.tradeUnit||1)});
     setPortModal(true);
   };
 
@@ -2206,7 +2212,7 @@ const VRSection = ({ data, setData }) => {
                 {sellTable.length===0&&<p className="text-xs text-gray-400 text-center py-3">보유 없음</p>}
                 {sellTable.map((r,i)=>(
                   <div key={i} className={`flex justify-between text-xs px-2 py-1.5 rounded-lg ${i===0?"bg-red-100 font-bold":"bg-red-50"}`}>
-                    <span className="text-red-700">{r.qty}주</span>
+                    <span className="text-red-700">{r.qty}주 <span className="text-red-400">(×{r.unitQty||1})</span></span>
                     <span className="text-red-800 font-semibold">{fmtVR(r.price,currency)}</span>
                   </div>
                 ))}
@@ -2292,9 +2298,10 @@ const VRSection = ({ data, setData }) => {
           </div>
           {editPort&&<div className="p-3 rounded-xl bg-amber-50 border border-amber-100 space-y-2">
             <p className="text-xs font-bold text-amber-700">현재 운용 현황 수정</p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <Inp label="현재 Pool" type="number" value={portForm.currentPool} onChange={v=>setPortForm(f=>({...f,currentPool:v}))}/>
               <Inp label="현재 보유수량" type="number" value={portForm.currentQty} onChange={v=>setPortForm(f=>({...f,currentQty:v}))}/>
+              <Inp label="거래단위 (주)" type="number" value={portForm.tradeUnit} onChange={v=>setPortForm(f=>({...f,tradeUnit:v}))}/>
             </div>
             <p className="text-xs text-amber-600">* 매수/매도표가 이 값 기준으로 재계산됩니다</p>
           </div>}
