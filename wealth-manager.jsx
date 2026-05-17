@@ -1789,7 +1789,7 @@ const fmtVRShort = (n, currency) => {
   return '$' + Number(n).toFixed(0);
 };
 
-const vrCalcInitialV = (port) => port.qty * port.startPrice + port.initialPool;
+const vrCalcInitialV = (port) => port.qty * port.startPrice;
 
 const vrCalcCurrentV = (port) => {
   // 현재 V = 저장된 V값 (사이클 갱신될 때마다 업데이트됨)
@@ -1892,7 +1892,7 @@ const VRSection = ({ data, setData }) => {
   const [portForm, setPortForm] = useState({
     ticker:'TQQQ', nickname:'', qty:'', avgPrice:'', startPrice:'', initialPool:'',
     G:'10', bandPct:'15', poolLimitPct:'75', contribution:'250', startDate:'',
-    currentPool:'', currentQty:'', tradeUnit:'1'
+    currentPool:'', currentQty:'', tradeUnit:'1', currentV:''
   });
 
   // 거래 모달
@@ -1953,7 +1953,7 @@ const VRSection = ({ data, setData }) => {
     const startPrice = Number(portForm.startPrice);
     const avgPrice = Number(portForm.avgPrice) || startPrice;
     const initialPool = Number(portForm.initialPool) || 0;
-    const initV = qty * startPrice + initialPool;
+    const initV = qty * startPrice;
     const np = {
       id: editPort?.id || 'vr_'+genId(),
       ticker, nickname: portForm.nickname||'', qty, avgPrice, startPrice, initialPool,
@@ -1964,7 +1964,7 @@ const VRSection = ({ data, setData }) => {
       startDate: portForm.startDate,
       cycleStartDate: portForm.startDate,
       cycleNo: editPort?.cycleNo || 1,
-      currentV: editPort?.currentV || initV,
+      currentV: portForm.currentV!=='' ? Number(portForm.currentV) : (editPort?.currentV || initV),
       pool: portForm.currentPool!=='' ? Number(portForm.currentPool) : (editPort?.pool != null ? editPort.pool : initialPool),
       currentQty: portForm.currentQty!=='' ? Number(portForm.currentQty) : (editPort?.currentQty != null ? editPort.currentQty : qty),
       tradeUnit: Number(portForm.tradeUnit)||1,
@@ -1979,7 +1979,7 @@ const VRSection = ({ data, setData }) => {
 
   const openEditPort = (p) => {
     setEditPort(p);
-    setPortForm({ticker:p.ticker,nickname:p.nickname||'',qty:String(p.qty),avgPrice:String(p.avgPrice),startPrice:String(p.startPrice),initialPool:String(p.initialPool),G:String(p.G),bandPct:String(p.bandPct),poolLimitPct:String(p.poolLimitPct),contribution:String(p.contribution),startDate:p.startDate,currentPool:String(p.pool!=null?p.pool:p.initialPool),currentQty:String(p.currentQty!=null?p.currentQty:p.qty),tradeUnit:String(p.tradeUnit||1)});
+    setPortForm({ticker:p.ticker,nickname:p.nickname||'',qty:String(p.qty),avgPrice:String(p.avgPrice),startPrice:String(p.startPrice),initialPool:String(p.initialPool),G:String(p.G),bandPct:String(p.bandPct),poolLimitPct:String(p.poolLimitPct),contribution:String(p.contribution),startDate:p.startDate,currentPool:String(p.pool!=null?p.pool:p.initialPool),currentQty:String(p.currentQty!=null?p.currentQty:p.qty),tradeUnit:String(p.tradeUnit||1),currentV:String(p.currentV||'')});
     setPortModal(true);
   };
 
@@ -2286,7 +2286,7 @@ const VRSection = ({ data, setData }) => {
             <Inp label="평단가" type="number" value={portForm.avgPrice} onChange={v=>setPortForm(f=>({...f,avgPrice:v}))}/>
           </div>
           <Inp label="전일 종가 (초기 V 계산 기준)" type="number" value={portForm.startPrice} onChange={v=>setPortForm(f=>({...f,startPrice:v}))} required/>
-          {portForm.qty&&portForm.startPrice&&<div className="p-2 rounded-lg bg-blue-50 text-xs text-center text-blue-700">초기 V = {portForm.qty} × {portForm.startPrice} + {portForm.initialPool||0} = <span className="font-bold">{fmtVR(Number(portForm.qty)*Number(portForm.startPrice)+Number(portForm.initialPool||0), vrCurrency(portForm.ticker))}</span></div>}
+          {portForm.qty&&portForm.startPrice&&<div className="p-2 rounded-lg bg-blue-50 text-xs text-center text-blue-700">초기 V = {portForm.qty} × {portForm.startPrice} = <span className="font-bold">{fmtVR(Number(portForm.qty)*Number(portForm.startPrice), vrCurrency(portForm.ticker))}</span><span className="text-gray-400 ml-1">(Pool {fmtVR(Number(portForm.initialPool||0), vrCurrency(portForm.ticker))}은 별도 보관)</span></div>}
           <div className="grid grid-cols-2 gap-3">
             <Inp label="초기 Pool" type="number" value={portForm.initialPool} onChange={v=>setPortForm(f=>({...f,initialPool:v}))}/>
             <Inp label="적립금 (사이클당)" type="number" value={portForm.contribution} onChange={v=>setPortForm(f=>({...f,contribution:v}))}/>
@@ -2298,12 +2298,15 @@ const VRSection = ({ data, setData }) => {
           </div>
           {editPort&&<div className="p-3 rounded-xl bg-amber-50 border border-amber-100 space-y-2">
             <p className="text-xs font-bold text-amber-700">현재 운용 현황 수정</p>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              <Inp label="현재 V" type="number" value={portForm.currentV} onChange={v=>setPortForm(f=>({...f,currentV:v}))}/>
               <Inp label="현재 Pool" type="number" value={portForm.currentPool} onChange={v=>setPortForm(f=>({...f,currentPool:v}))}/>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               <Inp label="현재 보유수량" type="number" value={portForm.currentQty} onChange={v=>setPortForm(f=>({...f,currentQty:v}))}/>
               <Inp label="거래단위 (주)" type="number" value={portForm.tradeUnit} onChange={v=>setPortForm(f=>({...f,tradeUnit:v}))}/>
             </div>
-            <p className="text-xs text-amber-600">* 매수/매도표가 이 값 기준으로 재계산됩니다</p>
+            <p className="text-xs text-amber-600">* V/Pool/수량/거래단위 수정 시 매수·매도표 즉시 재계산</p>
           </div>}
           <div className="flex gap-2 justify-end pt-2"><Btn variant="secondary" onClick={()=>setPortModal(false)}>취소</Btn><Btn onClick={savePort}>저장</Btn></div>
         </div>
