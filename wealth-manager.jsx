@@ -2811,6 +2811,15 @@ const MumuSection = ({ data, setData }) => {
               </div>
             ))}</div>
           </div>}
+          {guide.crashLocs?.length>0&&<div className="mt-3 pt-3 border-t border-gray-100">
+            <p className="text-xs font-bold text-gray-500 mb-2">+@ 폭락 대비 추가 LOC</p>
+            <div className="space-y-1">{guide.crashLocs.map((g,i)=>(
+              <div key={i} className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-gray-50 text-xs">
+                <span className="text-gray-500">- LOC</span>
+                <span className="font-semibold text-gray-700">{fmtUSD(g.price)} × {g.qty}주</span>
+              </div>
+            ))}</div>
+          </div>}
         </Card>
 
         {/* 거래 내역 */}
